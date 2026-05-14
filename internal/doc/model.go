@@ -34,6 +34,14 @@ type Inline struct {
 // Document is the editable model. M1 only fills it with paragraph blocks.
 type Document struct {
 	Blocks []Block
+	Meta   DocMeta
+}
+
+// DocMeta is document-level metadata stored in YAML front-matter at the top
+// of the .md file. Background instructions (the per-document system prompt
+// for AI commands) live here.
+type DocMeta struct {
+	Instructions string
 }
 
 // New returns an empty document containing a single empty paragraph so the
@@ -44,7 +52,10 @@ func New() *Document {
 
 // Clone produces a deep copy. Used by the undo stack and version snapshots.
 func (d *Document) Clone() *Document {
-	out := &Document{Blocks: make([]Block, len(d.Blocks))}
+	out := &Document{
+		Blocks: make([]Block, len(d.Blocks)),
+		Meta:   d.Meta,
+	}
 	for i, b := range d.Blocks {
 		out.Blocks[i] = b.clone()
 	}

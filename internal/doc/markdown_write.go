@@ -15,9 +15,19 @@ import (
 // single trailing newline.
 func WriteMarkdown(d *Document) string {
 	if d == nil || len(d.Blocks) == 0 {
+		if d != nil {
+			if meta := writeMeta(d.Meta); meta != "" {
+				return "---\n" + meta + "---\n\n\n"
+			}
+		}
 		return "\n"
 	}
 	var sb strings.Builder
+	if meta := writeMeta(d.Meta); meta != "" {
+		sb.WriteString("---\n")
+		sb.WriteString(meta)
+		sb.WriteString("---\n\n")
+	}
 	i := 0
 	for i < len(d.Blocks) {
 		if i > 0 {

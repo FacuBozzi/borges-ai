@@ -62,6 +62,14 @@ type RichEditor struct {
 	// undo/redo stacks. Lazily allocated on first commit.
 	undo *undoStack
 	redo *undoStack
+
+	// activeAI is non-zero while an AI streaming replacement is in flight.
+	// Used to dedup concurrent replacements.
+	activeAI int64
+
+	// ctxExtender, when set by the app layer, supplies extra context-menu
+	// items (AI actions). See SetContextMenuExtender.
+	ctxExtender ContextMenuExtender
 }
 
 // New creates a RichEditor populated with the given document. Pass doc.New()
@@ -75,6 +83,30 @@ func New(d *doc.Document) *RichEditor {
 
 // caret returns the live caret position (the head of the selection).
 func (e *RichEditor) caret() doc.Position { return e.sel.Head }
+
+// HasSelection reports whether the current selection spans any text.
+func (e *RichEditor) HasSelection() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return !e.sel.IsCollapsed()
+}
+
+// SelectionText returns the plain text of the current selection (or "" when
+// collapsed). Safe to call from any goroutine.
+func (e *RichEditor) SelectionText() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.selectionText()
+}
+
+// SetDocMeta replaces the document's metadata (background instructions etc.)
+// and marks the doc dirty.
+func (e *RichEditor) SetDocMeta(m doc.DocMeta) {
+	e.mu.Lock()
+	e.doc.Meta = m
+	e.mu.Unlock()
+	e.fireChanged()
+}
 
 // setCaret collapses the selection to a single point.
 func (e *RichEditor) setCaret(p doc.Position) {

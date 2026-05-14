@@ -55,6 +55,7 @@ func New() (*App, error) {
 	a.window.SetOnClosed(func() { _ = st.Close() })
 	a.window.Canvas().Focus(a.editor)
 	a.registerEditorShortcuts()
+	a.installContextMenuExtender()
 	return a, nil
 }
 
@@ -107,7 +108,15 @@ func (a *App) buildMenu() *fyne.MainMenu {
 	saveItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierShortcutDefault}
 	saveAsItem := fyne.NewMenuItem("Save As...", a.fileSaveAs)
 	saveAsItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierShortcutDefault | fyne.KeyModifierShift}
-	return fyne.NewMainMenu(fyne.NewMenu("File", newItem, openItem, saveItem, saveAsItem))
+
+	paletteItem := fyne.NewMenuItem("Command Palette...", a.openCommandPalette)
+	paletteItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierShortcutDefault}
+	contextItem := fyne.NewMenuItem("Background Instructions...", a.editContext)
+
+	return fyne.NewMainMenu(
+		fyne.NewMenu("File", newItem, openItem, saveItem, saveAsItem),
+		fyne.NewMenu("AI", paletteItem, contextItem),
+	)
 }
 
 func (a *App) onDocChanged() {

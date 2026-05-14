@@ -19,18 +19,24 @@ var mdParser = goldmark.New(
 // fenced + indented code blocks, horizontal rule. Inline marks: bold,
 // italic, code, strike. Underline tags pass through as literal text.
 func ParseMarkdown(src string) *Document {
-	if strings.TrimSpace(src) == "" {
-		return New()
+	front, body := splitFrontMatter(src)
+	meta := parseMeta(front)
+	if strings.TrimSpace(body) == "" {
+		d := New()
+		d.Meta = meta
+		return d
 	}
-	source := []byte(src)
+	source := []byte(body)
 	root := mdParser.Parser().Parse(text.NewReader(source))
 
-	d := &Document{}
+	d := &Document{Meta: meta}
 	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
 		d.Blocks = append(d.Blocks, blocksFromAST(n, source)...)
 	}
 	if len(d.Blocks) == 0 {
-		return New()
+		empty := New()
+		empty.Meta = meta
+		return empty
 	}
 	return d
 }

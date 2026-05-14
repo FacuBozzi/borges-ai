@@ -77,6 +77,27 @@ func TestRoundTripCodeBlock(t *testing.T) {
 	}
 }
 
+func TestFrontMatterRoundTrip(t *testing.T) {
+	in := "---\ninstructions: Write in a formal academic tone.\n---\n\nFirst paragraph.\n"
+	d := ParseMarkdown(in)
+	if d.Meta.Instructions != "Write in a formal academic tone." {
+		t.Errorf("instructions not parsed: %q", d.Meta.Instructions)
+	}
+	out := WriteMarkdown(d)
+	if out != in {
+		t.Errorf("front-matter round-trip mismatch:\nin:  %q\nout: %q", in, out)
+	}
+}
+
+func TestFrontMatterAbsent(t *testing.T) {
+	// A doc without front-matter shouldn't grow one on save.
+	in := "Hello world\n"
+	out := WriteMarkdown(ParseMarkdown(in))
+	if out != in {
+		t.Errorf("plain doc shouldn't gain front-matter: in=%q out=%q", in, out)
+	}
+}
+
 func TestRoundTripHR(t *testing.T) {
 	in := "before\n\n---\n\nafter\n"
 	out := WriteMarkdown(ParseMarkdown(in))

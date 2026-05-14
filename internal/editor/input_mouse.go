@@ -6,40 +6,84 @@ import (
 	"github.com/facubozzi/fyne-writer/internal/doc"
 )
 
-// Tapped implements fyne.Tappable. A click moves the caret to the clicked
-// position and focuses the editor so subsequent key input is captured.
+// Compile-time assertion that we satisfy fyne.Draggable for drag-select.
+var _ fyne.Draggable = (*RichEditor)(nil)
+
+// Tapped implements fyne.Tappable. A click collapses the selection at the
+// clicked position and focuses the editor.
 func (e *RichEditor) Tapped(ev *fyne.PointEvent) {
-	e.positionCaretAt(ev.Position)
+	pos, ok := e.hitTest(ev.Position)
+	if !ok {
+		return
+	}
+	e.mu.Lock()
+	e.setCaret(pos)
+	e.preferredX = -1
+	e.mu.Unlock()
 	if c := fyne.CurrentApp().Driver().CanvasForObject(e); c != nil {
 		c.Focus(e)
 	}
+	e.Refresh()
 }
 
-// TappedSecondary will host the right-click context menu in M2. For now it's
-// a no-op so we satisfy the interface and prevent the default paste-only
-// menu from interfering with our future implementation.
+// TappedSecondary will host the right-click context menu in M2d.
 func (e *RichEditor) TappedSecondary(_ *fyne.PointEvent) {}
 
-func (e *RichEditor) positionCaretAt(p fyne.Position) {
+// Dragged implements fyne.Draggable. The first event of a drag captures the
+// anchor at the press location; subsequent events move the head.
+func (e *RichEditor) Dragged(ev *fyne.DragEvent) {
+	pos, ok := e.hitTest(ev.Position)
+	if !ok {
+		return
+	}
 	e.mu.Lock()
-	lines := e.lines
-	if len(lines) == 0 {
-		e.mu.Unlock()
-		return
+	if !e.dragging {
+		// Compute the press point by subtracting the accumulated drag delta.
+		anchorPos := fyne.NewPos(ev.Position.X-ev.Dragged.DX, ev.Position.Y-ev.Dragged.DY)
+		if anchor, ok := e.hitTestLocked(anchorPos); ok {
+			e.dragAnchor = anchor
+		} else {
+			e.dragAnchor = pos
+		}
+		e.dragging = true
 	}
-	li := lineAtY(lines, p.Y)
+	e.sel = doc.Selection{Anchor: e.dragAnchor, Head: pos}
+	e.preferredX = -1
+	e.mu.Unlock()
+	if c := fyne.CurrentApp().Driver().CanvasForObject(e); c != nil {
+		c.Focus(e)
+	}
+	e.Refresh()
+}
+
+// DragEnd is fired when the mouse button is released after a drag.
+func (e *RichEditor) DragEnd() {
+	e.mu.Lock()
+	e.dragging = false
+	e.mu.Unlock()
+}
+
+// hitTest maps a widget-relative point to a document position. Returns
+// false when there is no line table yet (very early in widget life).
+func (e *RichEditor) hitTest(p fyne.Position) (doc.Position, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.hitTestLocked(p)
+}
+
+func (e *RichEditor) hitTestLocked(p fyne.Position) (doc.Position, bool) {
+	if len(e.lines) == 0 {
+		return doc.Position{}, false
+	}
+	li := lineAtY(e.lines, p.Y)
 	if li < 0 {
-		e.mu.Unlock()
-		return
+		return doc.Position{}, false
 	}
-	ln := lines[li]
+	ln := e.lines[li]
 	local := offsetAtX(ln, p.X)
-	e.caret = doc.Position{
+	return doc.Position{
 		Path:   []int{ln.blockIdx},
 		Inline: 0,
 		Offset: ln.startByte + local,
-	}
-	e.preferredX = -1
-	e.mu.Unlock()
-	e.Refresh()
+	}, true
 }

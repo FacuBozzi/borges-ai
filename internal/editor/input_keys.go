@@ -4,12 +4,31 @@ import (
 	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/driver/desktop"
 
 	"github.com/facubozzi/fyne-writer/internal/doc"
 )
 
-// TypedRune handles single printable runes entered by the user. Implements
-// fyne.Focusable.
+// shiftHeld is set by KeyDown/KeyUp so we know whether arrow keys should
+// extend the selection. Fyne fires TypedKey without modifier metadata, so we
+// track them via desktop.Keyable.
+var _ desktop.Keyable = (*RichEditor)(nil)
+
+func (e *RichEditor) KeyDown(ev *fyne.KeyEvent) {
+	switch ev.Name {
+	case desktop.KeyShiftLeft, desktop.KeyShiftRight:
+		e.shiftHeld = true
+	}
+}
+
+func (e *RichEditor) KeyUp(ev *fyne.KeyEvent) {
+	switch ev.Name {
+	case desktop.KeyShiftLeft, desktop.KeyShiftRight:
+		e.shiftHeld = false
+	}
+}
+
+// TypedRune handles single printable runes. fyne.Focusable.
 func (e *RichEditor) TypedRune(r rune) {
 	if r == 0 {
 		return
@@ -21,7 +40,7 @@ func (e *RichEditor) TypedRune(r rune) {
 }
 
 // TypedKey handles non-printable keys: navigation, deletion, return.
-// Implements fyne.Focusable.
+// fyne.Focusable.
 func (e *RichEditor) TypedKey(ev *fyne.KeyEvent) {
 	switch ev.Name {
 	case fyne.KeyBackspace:
@@ -40,29 +59,26 @@ func (e *RichEditor) TypedKey(ev *fyne.KeyEvent) {
 		e.mu.Unlock()
 		e.invalidate()
 	case fyne.KeyLeft:
-		e.moveCaret(caretLeft)
+		e.moveCaret(caretLeft, e.shiftHeld)
 	case fyne.KeyRight:
-		e.moveCaret(caretRight)
+		e.moveCaret(caretRight, e.shiftHeld)
 	case fyne.KeyUp:
-		e.moveCaret(caretUp)
+		e.moveCaret(caretUp, e.shiftHeld)
 	case fyne.KeyDown:
-		e.moveCaret(caretDown)
+		e.moveCaret(caretDown, e.shiftHeld)
 	case fyne.KeyHome:
-		e.moveCaret(caretLineStart)
+		e.moveCaret(caretLineStart, e.shiftHeld)
 	case fyne.KeyEnd:
-		e.moveCaret(caretLineEnd)
+		e.moveCaret(caretLineEnd, e.shiftHeld)
 	}
 }
 
-// invalidate is called after every mutation to refresh the renderer and
-// notify the app of changes.
+// invalidate refreshes the renderer and notifies listeners.
 func (e *RichEditor) invalidate() {
 	e.Refresh()
 	e.fireChanged()
 }
 
-// caretMove is the kind of caret motion the user requested. Implemented as
-// an enum so the switch in moveCaret stays compact.
 type caretMove int
 
 const (
@@ -74,98 +90,114 @@ const (
 	caretLineEnd
 )
 
-func (e *RichEditor) moveCaret(m caretMove) {
+// moveCaret moves the selection head. If extend is true the anchor stays;
+// otherwise the anchor collapses to the new head. preferredX is preserved
+// only across consecutive caretUp/caretDown moves.
+func (e *RichEditor) moveCaret(m caretMove, extend bool) {
 	e.mu.Lock()
+	prev := e.sel.Head
 	switch m {
 	case caretLeft:
-		e.caretMoveLeft()
+		newPos := e.posLeft(prev)
+		e.sel.Head = newPos
 		e.preferredX = -1
 	case caretRight:
-		e.caretMoveRight()
+		newPos := e.posRight(prev)
+		e.sel.Head = newPos
 		e.preferredX = -1
 	case caretUp:
-		e.caretMoveVertical(-1)
+		e.sel.Head = e.posVertical(prev, -1)
 	case caretDown:
-		e.caretMoveVertical(+1)
+		e.sel.Head = e.posVertical(prev, +1)
 	case caretLineStart:
-		e.caretMoveLineEdge(-1)
+		e.sel.Head = e.posLineEdge(prev, -1)
 		e.preferredX = -1
 	case caretLineEnd:
-		e.caretMoveLineEdge(+1)
+		e.sel.Head = e.posLineEdge(prev, +1)
 		e.preferredX = -1
+	}
+	if !extend {
+		e.sel.Anchor = e.sel.Head
 	}
 	e.mu.Unlock()
 	e.Refresh()
 }
 
-func (e *RichEditor) caretMoveLeft() {
-	bi := e.caret.Path[0]
-	if e.caret.Offset > 0 {
-		text := e.blockText(bi)
-		_, size := utf8.DecodeLastRuneInString(text[:e.caret.Offset])
-		e.caret.Offset -= size
+// selectAll sets the selection to span the entire document.
+func (e *RichEditor) selectAll() {
+	e.mu.Lock()
+	if len(e.doc.Blocks) == 0 {
+		e.mu.Unlock()
 		return
+	}
+	last := len(e.doc.Blocks) - 1
+	e.sel = doc.Selection{
+		Anchor: doc.Position{Path: []int{0}, Inline: 0, Offset: 0},
+		Head:   doc.Position{Path: []int{last}, Inline: 0, Offset: len(e.blockText(last))},
+	}
+	e.preferredX = -1
+	e.mu.Unlock()
+	e.Refresh()
+}
+
+func (e *RichEditor) posLeft(p doc.Position) doc.Position {
+	bi := p.Path[0]
+	if p.Offset > 0 {
+		text := e.blockText(bi)
+		_, size := utf8.DecodeLastRuneInString(text[:p.Offset])
+		return doc.Position{Path: []int{bi}, Inline: 0, Offset: p.Offset - size}
 	}
 	if bi > 0 {
-		prev := bi - 1
-		e.caret = doc.Position{Path: []int{prev}, Inline: 0, Offset: len(e.blockText(prev))}
+		return doc.Position{Path: []int{bi - 1}, Inline: 0, Offset: len(e.blockText(bi - 1))}
 	}
+	return p
 }
 
-func (e *RichEditor) caretMoveRight() {
-	bi := e.caret.Path[0]
+func (e *RichEditor) posRight(p doc.Position) doc.Position {
+	bi := p.Path[0]
 	text := e.blockText(bi)
-	if e.caret.Offset < len(text) {
-		_, size := utf8.DecodeRuneInString(text[e.caret.Offset:])
-		e.caret.Offset += size
-		return
+	if p.Offset < len(text) {
+		_, size := utf8.DecodeRuneInString(text[p.Offset:])
+		return doc.Position{Path: []int{bi}, Inline: 0, Offset: p.Offset + size}
 	}
 	if bi+1 < len(e.doc.Blocks) {
-		e.caret = doc.Position{Path: []int{bi + 1}, Inline: 0, Offset: 0}
+		return doc.Position{Path: []int{bi + 1}, Inline: 0, Offset: 0}
 	}
+	return p
 }
 
-func (e *RichEditor) caretMoveLineEdge(dir int) {
-	// Find current line within the cached line table.
-	if len(e.lines) == 0 || len(e.caret.Path) == 0 {
-		return
+func (e *RichEditor) posLineEdge(p doc.Position, dir int) doc.Position {
+	if len(e.lines) == 0 {
+		return p
 	}
-	li := lineForPosition(e.lines, e.caret.Path[0], e.caret.Offset)
+	li := lineForPosition(e.lines, p.Path[0], p.Offset)
 	if li < 0 {
-		return
+		return p
 	}
 	ln := e.lines[li]
 	if dir < 0 {
-		e.caret.Offset = ln.startByte
-	} else {
-		e.caret.Offset = ln.endByte
+		return doc.Position{Path: []int{ln.blockIdx}, Inline: 0, Offset: ln.startByte}
 	}
+	return doc.Position{Path: []int{ln.blockIdx}, Inline: 0, Offset: ln.endByte}
 }
 
-// caretMoveVertical moves the caret up (dir=-1) or down (dir=+1) by one
-// visual line, preserving the user's preferred X column across runs of up/
-// down moves through ragged paragraphs.
-func (e *RichEditor) caretMoveVertical(dir int) {
-	if len(e.lines) == 0 || len(e.caret.Path) == 0 {
-		return
+func (e *RichEditor) posVertical(p doc.Position, dir int) doc.Position {
+	if len(e.lines) == 0 {
+		return p
 	}
-	li := lineForPosition(e.lines, e.caret.Path[0], e.caret.Offset)
+	li := lineForPosition(e.lines, p.Path[0], p.Offset)
 	if li < 0 {
-		return
+		return p
 	}
 	want := e.preferredX
 	if want < 0 {
-		want = xForOffset(e.lines[li], e.caret.Offset)
+		want = xForOffset(e.lines[li], p.Offset)
 		e.preferredX = want
 	}
 	target := li + dir
 	if target < 0 || target >= len(e.lines) {
-		return
+		return p
 	}
 	dest := e.lines[target]
-	e.caret = doc.Position{
-		Path:   []int{dest.blockIdx},
-		Inline: 0,
-		Offset: dest.startByte + offsetAtX(dest, want),
-	}
+	return doc.Position{Path: []int{dest.blockIdx}, Inline: 0, Offset: dest.startByte + offsetAtX(dest, want)}
 }

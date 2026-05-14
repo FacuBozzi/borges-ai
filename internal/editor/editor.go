@@ -32,23 +32,43 @@ type RichEditor struct {
 
 	mu       sync.Mutex
 	doc      *doc.Document
-	caret    doc.Position
+	sel      doc.Selection
 	focused  bool
 	onChange func()
 	lines    []visualLine // cached layout; rebuilt on doc/width change
 	width    float32      // last width used for layout
 
-	// Public: width used by the caret movement code to remember a "preferred
-	// column" when moving up/down across lines of different lengths.
+	// preferredX is the screen X the caret would like to occupy when moving
+	// up/down across lines of different lengths. Reset to -1 by any motion
+	// other than caretUp/caretDown.
 	preferredX float32
+
+	// dragAnchor is the selection anchor captured at the start of a drag, so
+	// each Dragged event extends from the original click rather than the
+	// previous drag position.
+	dragAnchor doc.Position
+	dragging   bool
+
+	// shiftHeld tracks whether either Shift key is currently pressed, so
+	// arrow-key motion can extend the selection. Updated by KeyDown/KeyUp.
+	shiftHeld bool
 }
 
 // New creates a RichEditor populated with the given document. Pass doc.New()
 // for an empty placeholder paragraph.
 func New(d *doc.Document) *RichEditor {
-	e := &RichEditor{doc: d, caret: d.Start()}
+	start := d.Start()
+	e := &RichEditor{doc: d, sel: doc.Selection{Anchor: start, Head: start}}
 	e.ExtendBaseWidget(e)
 	return e
+}
+
+// caret returns the live caret position (the head of the selection).
+func (e *RichEditor) caret() doc.Position { return e.sel.Head }
+
+// setCaret collapses the selection to a single point.
+func (e *RichEditor) setCaret(p doc.Position) {
+	e.sel = doc.Selection{Anchor: p, Head: p}
 }
 
 // Document returns the current document. Caller must not mutate concurrently
@@ -63,9 +83,10 @@ func (e *RichEditor) Document() *doc.Document {
 func (e *RichEditor) SetDocument(d *doc.Document) {
 	e.mu.Lock()
 	e.doc = d
-	e.caret = d.Start()
+	start := d.Start()
+	e.sel = doc.Selection{Anchor: start, Head: start}
 	e.lines = nil
-	e.preferredX = 0
+	e.preferredX = -1
 	e.mu.Unlock()
 	e.Refresh()
 	e.fireChanged()

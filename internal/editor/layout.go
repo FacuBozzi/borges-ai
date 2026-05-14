@@ -274,3 +274,74 @@ func xForOffset(line visualLine, byteOffset int) float32 {
 	style := fyne.TextStyle{}
 	return line.x + fyne.MeasureText(line.text[:local], fontSize, style).Width
 }
+
+// styleRun is one styled segment of a visual line. The renderer emits one
+// canvas.Text per styleRun. Coordinates are widget-relative.
+type styleRun struct {
+	text  string
+	marks doc.Mark
+	x     float32 // left edge
+	y     float32 // top edge (= line.y)
+	w     float32 // measured width
+	h     float32 // = lineHeight
+}
+
+// decomposeLine splits a visual line into styled runs by walking the inlines
+// that cover its byte range. Each contiguous slice of bytes belonging to one
+// inline becomes a run.
+func decomposeLine(line visualLine, b doc.Block) []styleRun {
+	if len(b.Inlines) == 0 || line.text == "" {
+		return nil
+	}
+	var runs []styleRun
+	// Walk inlines, tracking consumed bytes; emit a run for each that
+	// intersects [line.startByte, line.endByte).
+	consumed := 0
+	xCursor := line.x
+	for _, in := range b.Inlines {
+		inlineStart := consumed
+		inlineEnd := consumed + len(in.Text)
+		consumed = inlineEnd
+
+		start := line.startByte
+		if inlineStart > start {
+			start = inlineStart
+		}
+		end := line.endByte
+		if inlineEnd < end {
+			end = inlineEnd
+		}
+		if start >= end {
+			if inlineStart >= line.endByte {
+				break
+			}
+			continue
+		}
+		localFrom := start - inlineStart
+		localTo := end - inlineStart
+		txt := in.Text[localFrom:localTo]
+		style := textStyleFor(in.Marks)
+		w := fyne.MeasureText(txt, fontSize, style).Width
+		runs = append(runs, styleRun{
+			text:  txt,
+			marks: in.Marks,
+			x:     xCursor,
+			y:     line.y,
+			w:     w,
+			h:     line.height,
+		})
+		xCursor += w
+	}
+	return runs
+}
+
+// textStyleFor converts our Mark bitset into the subset of fyne.TextStyle we
+// can express via canvas.Text. Underline/Strike require manual line drawing
+// (handled by the renderer separately).
+func textStyleFor(m doc.Mark) fyne.TextStyle {
+	return fyne.TextStyle{
+		Bold:      m.Has(doc.MarkBold),
+		Italic:    m.Has(doc.MarkItalic),
+		Monospace: m.Has(doc.MarkCode),
+	}
+}

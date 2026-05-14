@@ -17,10 +17,11 @@ const caretBlinkPeriod = 530 * time.Millisecond
 type editorRenderer struct {
 	e *RichEditor
 
-	textObjs []*canvas.Text
-	selRects []*canvas.Rectangle
-	caret    *canvas.Rectangle
-	bg       *canvas.Rectangle
+	textObjs  []*canvas.Text     // pooled, one per styled run
+	deco      []*canvas.Line     // underline / strikethrough lines
+	selRects  []*canvas.Rectangle
+	caret     *canvas.Rectangle
+	bg        *canvas.Rectangle
 
 	running atomic.Bool
 }
@@ -42,6 +43,7 @@ func (r *editorRenderer) Layout(size fyne.Size) {
 	r.e.mu.Lock()
 	r.e.width = size.Width
 	r.e.lines = layout(r.e.doc, size.Width)
+	d := r.e.doc
 	lines := r.e.lines
 	sel := r.e.sel
 	focused := r.e.focused
@@ -50,7 +52,7 @@ func (r *editorRenderer) Layout(size fyne.Size) {
 	r.bg.Resize(size)
 	r.bg.Move(fyne.NewPos(0, 0))
 
-	r.syncTextObjects(lines)
+	r.syncContent(d, lines)
 	r.syncSelectionRects(lines, sel)
 	r.positionCaret(lines, sel, focused)
 }
@@ -68,13 +70,16 @@ func (r *editorRenderer) MinSize() fyne.Size {
 }
 
 func (r *editorRenderer) Objects() []fyne.CanvasObject {
-	out := make([]fyne.CanvasObject, 0, 2+len(r.selRects)+len(r.textObjs))
+	out := make([]fyne.CanvasObject, 0, 2+len(r.selRects)+len(r.textObjs)+len(r.deco))
 	out = append(out, r.bg)
 	for _, s := range r.selRects {
 		out = append(out, s)
 	}
 	for _, t := range r.textObjs {
 		out = append(out, t)
+	}
+	for _, ln := range r.deco {
+		out = append(out, ln)
 	}
 	out = append(out, r.caret)
 	return out
@@ -89,16 +94,20 @@ func (r *editorRenderer) Refresh() {
 	if r.e.width > 0 {
 		r.e.lines = layout(r.e.doc, r.e.width)
 	}
+	d := r.e.doc
 	lines := r.e.lines
 	sel := r.e.sel
 	focused := r.e.focused
 	r.e.mu.Unlock()
 
-	r.syncTextObjects(lines)
+	r.syncContent(d, lines)
 	r.syncSelectionRects(lines, sel)
 	r.positionCaret(lines, sel, focused)
 	for _, t := range r.textObjs {
 		t.Refresh()
+	}
+	for _, ln := range r.deco {
+		ln.Refresh()
 	}
 	for _, s := range r.selRects {
 		s.Refresh()
@@ -107,30 +116,83 @@ func (r *editorRenderer) Refresh() {
 	canvas.Refresh(r.e)
 }
 
-func (r *editorRenderer) syncTextObjects(lines []visualLine) {
+// syncContent walks lines, decomposes each into styled runs, and updates the
+// pooled canvas objects.
+func (r *editorRenderer) syncContent(d *doc.Document, lines []visualLine) {
 	fg := theme.Color(theme.ColorNameForeground)
-	for len(r.textObjs) < len(lines) {
+	var runs []styleRun
+	for _, ln := range lines {
+		if ln.blockIdx < 0 || ln.blockIdx >= len(d.Blocks) {
+			continue
+		}
+		runs = append(runs, decomposeLine(ln, d.Blocks[ln.blockIdx])...)
+	}
+
+	// Grow text pool.
+	for len(r.textObjs) < len(runs) {
 		t := canvas.NewText("", fg)
 		t.TextSize = fontSize
-		t.TextStyle = fyne.TextStyle{}
 		r.textObjs = append(r.textObjs, t)
 	}
-	for i, ln := range lines {
+	// Count how many decoration lines we'll need (underline + strike per run).
+	needDeco := 0
+	for _, run := range runs {
+		if run.marks.Has(doc.MarkUnderline) {
+			needDeco++
+		}
+		if run.marks.Has(doc.MarkStrike) {
+			needDeco++
+		}
+	}
+	for len(r.deco) < needDeco {
+		ln := canvas.NewLine(fg)
+		ln.StrokeWidth = 1
+		r.deco = append(r.deco, ln)
+	}
+
+	decoIdx := 0
+	for i, run := range runs {
 		t := r.textObjs[i]
-		t.Text = ln.text
+		t.Text = run.text
 		t.Color = fg
 		t.TextSize = fontSize
-		t.Move(fyne.NewPos(ln.x, ln.y))
-		t.Resize(fyne.NewSize(ln.width, ln.height))
+		t.TextStyle = textStyleFor(run.marks)
+		t.Move(fyne.NewPos(run.x, run.y))
+		t.Resize(fyne.NewSize(run.w, run.h))
+
+		if run.marks.Has(doc.MarkUnderline) {
+			ln := r.deco[decoIdx]
+			decoIdx++
+			ln.StrokeColor = fg
+			ln.StrokeWidth = 1
+			y := run.y + run.h - 4
+			ln.Position1 = fyne.NewPos(run.x, y)
+			ln.Position2 = fyne.NewPos(run.x+run.w, y)
+			ln.Show()
+		}
+		if run.marks.Has(doc.MarkStrike) {
+			ln := r.deco[decoIdx]
+			decoIdx++
+			ln.StrokeColor = fg
+			ln.StrokeWidth = 1
+			y := run.y + run.h*0.55
+			ln.Position1 = fyne.NewPos(run.x, y)
+			ln.Position2 = fyne.NewPos(run.x+run.w, y)
+			ln.Show()
+		}
 	}
-	for i := len(lines); i < len(r.textObjs); i++ {
+	// Hide leftover pool entries.
+	for i := len(runs); i < len(r.textObjs); i++ {
 		r.textObjs[i].Text = ""
 		r.textObjs[i].Move(fyne.NewPos(-10000, -10000))
 	}
+	for i := decoIdx; i < len(r.deco); i++ {
+		r.deco[i].Hide()
+	}
 }
 
-// syncSelectionRects draws a highlight rectangle for each visual line that
-// the selection spans. Pool is grown lazily; unused rects are moved offscreen.
+// syncSelectionRects draws a highlight rectangle for each visual line the
+// selection spans.
 func (r *editorRenderer) syncSelectionRects(lines []visualLine, sel doc.Selection) {
 	highlight := theme.Color(theme.ColorNameSelection)
 	rects := r.computeSelectionRects(lines, sel)
@@ -164,7 +226,6 @@ func (r *editorRenderer) computeSelectionRects(lines []visualLine, sel doc.Selec
 	}
 	var out []selRect
 	for _, ln := range lines {
-		// Determine whether this line falls within [lo, hi].
 		if ln.blockIdx < lo.Path[0] || ln.blockIdx > hi.Path[0] {
 			continue
 		}
@@ -177,9 +238,6 @@ func (r *editorRenderer) computeSelectionRects(lines []visualLine, sel doc.Selec
 			endByte = hi.Offset
 		}
 		if startByte >= endByte {
-			// Empty intersection — except when this whole line is between
-			// blocks of a cross-block selection, in which case we want a
-			// thin trailing indicator. For paragraphs we just skip.
 			if ln.blockIdx > lo.Path[0] && ln.blockIdx < hi.Path[0] && len(ln.text) == 0 {
 				out = append(out, selRect{x: ln.x, y: ln.y, w: 8, h: ln.height})
 			}
@@ -187,13 +245,10 @@ func (r *editorRenderer) computeSelectionRects(lines []visualLine, sel doc.Selec
 		}
 		x1 := xForOffset(ln, startByte)
 		x2 := xForOffset(ln, endByte)
-		// For lines fully inside the selection (not the last line), extend
-		// the highlight to the end of the visible line so empty space at the
-		// end of a wrapped line reads as "selected".
 		if ln.blockIdx < hi.Path[0] || endByte == ln.endByte {
 			x2 = ln.x + ln.width
 			if x2 == ln.x {
-				x2 = ln.x + 4 // a tiny stub for empty lines
+				x2 = ln.x + 4
 			}
 		}
 		out = append(out, selRect{x: x1, y: ln.y, w: x2 - x1, h: ln.height})

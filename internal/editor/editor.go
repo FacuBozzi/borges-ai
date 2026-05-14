@@ -52,6 +52,12 @@ type RichEditor struct {
 	// shiftHeld tracks whether either Shift key is currently pressed, so
 	// arrow-key motion can extend the selection. Updated by KeyDown/KeyUp.
 	shiftHeld bool
+
+	// pendingMarks is the mark-set the next typed rune will inherit, set by
+	// mark-toggle shortcuts (cmd+B etc.) while the selection is collapsed.
+	// Cleared by any caret movement.
+	pendingMarks    doc.Mark
+	pendingMarksSet bool
 }
 
 // New creates a RichEditor populated with the given document. Pass doc.New()

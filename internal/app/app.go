@@ -53,7 +53,21 @@ func New() (*App, error) {
 	a.window.SetMainMenu(a.buildMenu())
 	a.window.SetOnClosed(func() { _ = st.Close() })
 	a.window.Canvas().Focus(a.editor)
+	a.registerEditorShortcuts()
 	return a, nil
+}
+
+// registerEditorShortcuts wires the editor's mark-toggle shortcuts
+// (cmd+B/I/U/E and cmd+shift+X) onto the window canvas so they work whenever
+// the editor is focused.
+func (a *App) registerEditorShortcuts() {
+	c := a.window.Canvas()
+	for _, b := range editor.MarkShortcutBindings() {
+		mark := b.Mark
+		c.AddShortcut(b.Shortcut, func(fyne.Shortcut) {
+			a.editor.ToggleMark(mark)
+		})
+	}
 }
 
 func (a *App) Run()                 { a.window.ShowAndRun() }

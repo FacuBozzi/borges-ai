@@ -57,9 +57,10 @@ func (p *OpenAIProvider) build(req Request) openai.ChatCompletionNewParams {
 	if req.MaxTokens > 0 {
 		params.MaxCompletionTokens = param.NewOpt(int64(req.MaxTokens))
 	}
-	if req.Temperature > 0 {
-		params.Temperature = param.NewOpt(req.Temperature)
-	}
+	// Intentionally NOT setting Temperature: gpt-5 family (the default
+	// model) only accepts the API default of 1.0 and 400s on any other
+	// value. We accept losing the per-command temperature control on
+	// OpenAI; Anthropic still honors it.
 	return params
 }
 

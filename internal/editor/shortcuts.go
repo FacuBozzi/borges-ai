@@ -24,6 +24,10 @@ func (e *RichEditor) TypedShortcut(s fyne.Shortcut) {
 		e.doPaste(sc.Clipboard)
 	case *fyne.ShortcutSelectAll:
 		e.selectAll()
+	case *fyne.ShortcutUndo:
+		e.Undo()
+	case *fyne.ShortcutRedo:
+		e.Redo()
 	case *desktop.CustomShortcut:
 		if mark, ok := markForShortcut(sc); ok {
 			e.toggleMark(mark)
@@ -112,6 +116,7 @@ func (e *RichEditor) ToggleMark(m doc.Mark) { e.toggleMark(m) }
 // next typed character inherits the toggle.
 func (e *RichEditor) toggleMark(m doc.Mark) {
 	e.mu.Lock()
+	e.commitUndo(undoKindOther)
 	if e.sel.IsCollapsed() {
 		current := doc.MarksAt(e.doc.Blocks[e.sel.Head.Path[0]], e.sel.Head.Offset)
 		if e.pendingMarksSet {
@@ -190,6 +195,7 @@ func (e *RichEditor) doCut(cb fyne.Clipboard) {
 		cb.SetContent(text)
 	}
 	if !e.sel.IsCollapsed() {
+		e.commitUndo(undoKindOther)
 		e.deleteSelection()
 	}
 	e.mu.Unlock()

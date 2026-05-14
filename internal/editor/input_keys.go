@@ -119,6 +119,9 @@ func (e *RichEditor) moveCaret(m caretMove, extend bool) {
 	if !extend {
 		e.sel.Anchor = e.sel.Head
 	}
+	// Caret movement breaks any active typing/delete coalescing so cmd+Z
+	// undoes the previous "word" rather than backing through the caret moves.
+	e.breakUndoRun()
 	e.mu.Unlock()
 	e.Refresh()
 }

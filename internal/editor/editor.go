@@ -58,6 +58,10 @@ type RichEditor struct {
 	// Cleared by any caret movement.
 	pendingMarks    doc.Mark
 	pendingMarksSet bool
+
+	// undo/redo stacks. Lazily allocated on first commit.
+	undo *undoStack
+	redo *undoStack
 }
 
 // New creates a RichEditor populated with the given document. Pass doc.New()

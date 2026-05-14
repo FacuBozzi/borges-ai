@@ -95,6 +95,7 @@ func (e *RichEditor) deleteSelection() {
 // insertRune inserts r, replacing any current selection. r inherits the
 // marks active at the caret (typing inside a bold span stays bold).
 func (e *RichEditor) insertRune(r rune) {
+	e.commitUndo(undoKindTyping)
 	e.deleteSelection()
 	c := e.sel.Head
 	bi := c.Path[0]
@@ -109,6 +110,7 @@ func (e *RichEditor) insertRune(r rune) {
 // insertString inserts a literal string, splitting on "\n\n" into blocks and
 // inserting "\n" as soft breaks inside paragraphs.
 func (e *RichEditor) insertString(s string) {
+	e.commitUndo(undoKindOther)
 	e.deleteSelection()
 	if s == "" {
 		return
@@ -139,6 +141,7 @@ func (e *RichEditor) insertStringNoBreak(s string) {
 
 // splitBlock breaks the current block at the caret. Used for Enter.
 func (e *RichEditor) splitBlock() {
+	e.commitUndo(undoKindOther)
 	e.deleteSelection()
 	c := e.sel.Head
 	bi := c.Path[0]
@@ -154,9 +157,11 @@ func (e *RichEditor) splitBlock() {
 // else merges with the previous block.
 func (e *RichEditor) backspace() {
 	if !e.sel.IsCollapsed() {
+		e.commitUndo(undoKindOther)
 		e.deleteSelection()
 		return
 	}
+	e.commitUndo(undoKindDelete)
 	c := e.sel.Head
 	bi := c.Path[0]
 	if c.Offset > 0 {
@@ -191,9 +196,11 @@ func (e *RichEditor) backspace() {
 // merges with the next block.
 func (e *RichEditor) deleteForward() {
 	if !e.sel.IsCollapsed() {
+		e.commitUndo(undoKindOther)
 		e.deleteSelection()
 		return
 	}
+	e.commitUndo(undoKindDelete)
 	c := e.sel.Head
 	bi := c.Path[0]
 	text := e.blockText(bi)
@@ -217,6 +224,7 @@ func (e *RichEditor) deleteForward() {
 // the caret. The block's inline content is preserved.
 func (e *RichEditor) SetBlockType(t doc.BlockType, meta map[string]any) {
 	e.mu.Lock()
+	e.commitUndo(undoKindOther)
 	bi := e.sel.Head.Path[0]
 	if bi < 0 || bi >= len(e.doc.Blocks) {
 		e.mu.Unlock()
@@ -242,6 +250,7 @@ func (e *RichEditor) SetBlockType(t doc.BlockType, meta map[string]any) {
 // behavior on cmd+1/2/3).
 func (e *RichEditor) SetHeading(level int) {
 	e.mu.Lock()
+	e.commitUndo(undoKindOther)
 	bi := e.sel.Head.Path[0]
 	if bi < 0 || bi >= len(e.doc.Blocks) {
 		e.mu.Unlock()

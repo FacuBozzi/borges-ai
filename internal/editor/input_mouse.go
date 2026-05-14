@@ -26,8 +26,41 @@ func (e *RichEditor) Tapped(ev *fyne.PointEvent) {
 	e.Refresh()
 }
 
-// TappedSecondary will host the right-click context menu in M2d.
-func (e *RichEditor) TappedSecondary(_ *fyne.PointEvent) {}
+// TappedSecondary shows the right-click context menu. If the click landed
+// outside the current selection we first reposition the caret so the menu's
+// commands operate on a sensible target.
+func (e *RichEditor) TappedSecondary(ev *fyne.PointEvent) {
+	if pos, ok := e.hitTest(ev.Position); ok {
+		e.mu.Lock()
+		// Only move the caret if the click is OUTSIDE the current selection —
+		// otherwise a right-click inside a selection should preserve it.
+		inSelection := !e.sel.IsCollapsed() && !positionLess(pos, lower(e.sel)) && positionLess(pos, upper(e.sel))
+		if !inSelection {
+			e.setCaret(pos)
+			e.preferredX = -1
+		}
+		e.mu.Unlock()
+		if c := fyne.CurrentApp().Driver().CanvasForObject(e); c != nil {
+			c.Focus(e)
+		}
+		e.Refresh()
+	}
+	e.showContextMenuAt(ev.Position)
+}
+
+func lower(s doc.Selection) doc.Position {
+	if positionLess(s.Head, s.Anchor) {
+		return s.Head
+	}
+	return s.Anchor
+}
+
+func upper(s doc.Selection) doc.Position {
+	if positionLess(s.Head, s.Anchor) {
+		return s.Anchor
+	}
+	return s.Head
+}
 
 // Dragged implements fyne.Draggable. The first event of a drag captures the
 // anchor at the press location; subsequent events move the head.

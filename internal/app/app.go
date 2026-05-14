@@ -11,6 +11,7 @@ import (
 	fyneapp "fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 
@@ -58,14 +59,22 @@ func New() (*App, error) {
 }
 
 // registerEditorShortcuts wires the editor's mark-toggle shortcuts
-// (cmd+B/I/U/E and cmd+shift+X) onto the window canvas so they work whenever
-// the editor is focused.
+// (cmd+B/I/U/E + cmd+shift+X) and block-type shortcuts (cmd+1/2/3 for
+// headings, cmd+0 for paragraph) onto the window canvas so the glfw driver
+// constructs CustomShortcut objects on match and dispatches them to the
+// focused editor.
 func (a *App) registerEditorShortcuts() {
 	c := a.window.Canvas()
 	for _, b := range editor.MarkShortcutBindings() {
 		mark := b.Mark
 		c.AddShortcut(b.Shortcut, func(fyne.Shortcut) {
 			a.editor.ToggleMark(mark)
+		})
+	}
+	for _, b := range editor.BlockShortcutBindings() {
+		apply := b.Apply
+		c.AddShortcut(b.Shortcut, func(fyne.Shortcut) {
+			apply(a.editor)
 		})
 	}
 }
@@ -90,13 +99,15 @@ func (a *App) buildContent() fyne.CanvasObject {
 }
 
 func (a *App) buildMenu() *fyne.MainMenu {
-	fileMenu := fyne.NewMenu("File",
-		fyne.NewMenuItem("New", a.fileNew),
-		fyne.NewMenuItem("Open...", a.fileOpen),
-		fyne.NewMenuItem("Save", a.fileSave),
-		fyne.NewMenuItem("Save As...", a.fileSaveAs),
-	)
-	return fyne.NewMainMenu(fileMenu)
+	newItem := fyne.NewMenuItem("New", a.fileNew)
+	newItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyN, Modifier: fyne.KeyModifierShortcutDefault}
+	openItem := fyne.NewMenuItem("Open...", a.fileOpen)
+	openItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyO, Modifier: fyne.KeyModifierShortcutDefault}
+	saveItem := fyne.NewMenuItem("Save", a.fileSave)
+	saveItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierShortcutDefault}
+	saveAsItem := fyne.NewMenuItem("Save As...", a.fileSaveAs)
+	saveAsItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierShortcutDefault | fyne.KeyModifierShift}
+	return fyne.NewMainMenu(fyne.NewMenu("File", newItem, openItem, saveItem, saveAsItem))
 }
 
 func (a *App) onDocChanged() {

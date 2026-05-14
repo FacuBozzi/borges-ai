@@ -27,8 +27,26 @@ func (e *RichEditor) TypedShortcut(s fyne.Shortcut) {
 	case *desktop.CustomShortcut:
 		if mark, ok := markForShortcut(sc); ok {
 			e.toggleMark(mark)
+			return
+		}
+		if apply, ok := blockApplyForShortcut(sc); ok {
+			apply(e)
 		}
 	}
+}
+
+// blockApplyForShortcut maps a CustomShortcut back to its block-mutating fn.
+func blockApplyForShortcut(sc *desktop.CustomShortcut) (func(*RichEditor), bool) {
+	for _, b := range BlockShortcutBindings() {
+		ks, ok := b.Shortcut.(*desktop.CustomShortcut)
+		if !ok {
+			continue
+		}
+		if ks.Key() == sc.Key() && ks.Mod() == sc.Mod() {
+			return b.Apply, true
+		}
+	}
+	return nil, false
 }
 
 // markForShortcut maps the registered CustomShortcuts back to their mark.
@@ -45,9 +63,8 @@ func markForShortcut(sc *desktop.CustomShortcut) (doc.Mark, bool) {
 	return 0, false
 }
 
-// MarkShortcuts is the list of custom shortcut bindings the app wires up on
-// the window canvas. Each tuple is (shortcut, mark). Returned as a function
-// to avoid an import cycle (desktop is internal to editor).
+// MarkShortcutBindings lists custom shortcut bindings the app wires onto the
+// window canvas. Each tuple is (shortcut, mark).
 func MarkShortcutBindings() []MarkBinding {
 	return []MarkBinding{
 		{Shortcut: &desktop.CustomShortcut{KeyName: fyne.KeyB, Modifier: fyne.KeyModifierShortcutDefault}, Mark: doc.MarkBold},
@@ -63,6 +80,27 @@ type MarkBinding struct {
 	Shortcut fyne.Shortcut
 	Mark     doc.Mark
 }
+
+// BlockShortcutBindings lists custom shortcut bindings for block-type
+// changes. Each tuple is (shortcut, block transformation). The app
+// registers these on the window canvas alongside the mark bindings.
+func BlockShortcutBindings() []BlockBinding {
+	return []BlockBinding{
+		{Shortcut: &desktop.CustomShortcut{KeyName: fyne.Key1, Modifier: fyne.KeyModifierShortcutDefault}, Apply: func(e *RichEditor) { e.SetHeading(1) }},
+		{Shortcut: &desktop.CustomShortcut{KeyName: fyne.Key2, Modifier: fyne.KeyModifierShortcutDefault}, Apply: func(e *RichEditor) { e.SetHeading(2) }},
+		{Shortcut: &desktop.CustomShortcut{KeyName: fyne.Key3, Modifier: fyne.KeyModifierShortcutDefault}, Apply: func(e *RichEditor) { e.SetHeading(3) }},
+		{Shortcut: &desktop.CustomShortcut{KeyName: fyne.Key0, Modifier: fyne.KeyModifierShortcutDefault}, Apply: func(e *RichEditor) { e.SetBlockType(doc.BlockParagraph, nil) }},
+	}
+}
+
+// BlockBinding pairs a Fyne shortcut with a block-mutating callback.
+type BlockBinding struct {
+	Shortcut fyne.Shortcut
+	Apply    func(*RichEditor)
+}
+
+// ToggleMark is the public entry point invoked by canvas-level shortcut
+// callbacks.
 
 // ToggleMark is the public entry point invoked by canvas-level shortcut
 // callbacks.

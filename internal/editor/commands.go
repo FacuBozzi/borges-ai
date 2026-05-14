@@ -150,7 +150,8 @@ func (e *RichEditor) splitBlock() {
 }
 
 // backspace deletes the selection, else one rune before the caret, else
-// merges with the previous block.
+// (if at start of a non-paragraph block) reverts the block to a paragraph,
+// else merges with the previous block.
 func (e *RichEditor) backspace() {
 	if !e.sel.IsCollapsed() {
 		e.deleteSelection()
@@ -163,6 +164,14 @@ func (e *RichEditor) backspace() {
 		_, size := utf8.DecodeLastRuneInString(text[:c.Offset])
 		e.doc.Blocks[bi] = doc.DeleteRange(e.doc.Blocks[bi], c.Offset-size, c.Offset)
 		e.setCaret(doc.Position{Path: []int{bi}, Inline: 0, Offset: c.Offset - size})
+		e.preferredX = -1
+		return
+	}
+	// At start of block: if it's a non-paragraph (heading, quote, etc.),
+	// revert it to a paragraph instead of merging — matches Notion / Bear.
+	if e.doc.Blocks[bi].Type != doc.BlockParagraph {
+		e.doc.Blocks[bi].Type = doc.BlockParagraph
+		e.doc.Blocks[bi].Meta = nil
 		e.preferredX = -1
 		return
 	}
@@ -202,6 +211,53 @@ func (e *RichEditor) deleteForward() {
 	e.doc.Blocks[bi] = normalizeBlock(cur)
 	e.doc.Blocks = removeBlock(e.doc.Blocks, bi+1)
 	e.preferredX = -1
+}
+
+// SetBlockType changes the type (and meta) of the block currently containing
+// the caret. The block's inline content is preserved.
+func (e *RichEditor) SetBlockType(t doc.BlockType, meta map[string]any) {
+	e.mu.Lock()
+	bi := e.sel.Head.Path[0]
+	if bi < 0 || bi >= len(e.doc.Blocks) {
+		e.mu.Unlock()
+		return
+	}
+	e.doc.Blocks[bi].Type = t
+	if meta == nil {
+		e.doc.Blocks[bi].Meta = nil
+	} else {
+		out := make(map[string]any, len(meta))
+		for k, v := range meta {
+			out[k] = v
+		}
+		e.doc.Blocks[bi].Meta = out
+	}
+	e.preferredX = -1
+	e.mu.Unlock()
+	e.invalidate()
+}
+
+// SetHeading turns the current block into a heading at the given level.
+// Passing the level the block already has reverts it to a paragraph (toggle
+// behavior on cmd+1/2/3).
+func (e *RichEditor) SetHeading(level int) {
+	e.mu.Lock()
+	bi := e.sel.Head.Path[0]
+	if bi < 0 || bi >= len(e.doc.Blocks) {
+		e.mu.Unlock()
+		return
+	}
+	cur := e.doc.Blocks[bi]
+	if cur.Type == doc.BlockHeading && doc.HeadingLevel(cur) == level {
+		e.doc.Blocks[bi].Type = doc.BlockParagraph
+		e.doc.Blocks[bi].Meta = nil
+	} else {
+		e.doc.Blocks[bi].Type = doc.BlockHeading
+		e.doc.Blocks[bi].Meta = map[string]any{"level": level}
+	}
+	e.preferredX = -1
+	e.mu.Unlock()
+	e.invalidate()
 }
 
 // activeMarks returns the marks new text should inherit at the caret.

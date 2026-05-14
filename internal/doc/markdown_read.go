@@ -14,9 +14,10 @@ var mdParser = goldmark.New(
 	goldmark.WithExtensions(extension.Strikethrough),
 )
 
-// ParseMarkdown converts a markdown string into our Document model. M2b
-// supports paragraphs with inline marks: bold (**), italic (*), code (`),
-// strikethrough (~~), and HTML <u>...</u> for underline.
+// ParseMarkdown converts a markdown string into our Document model.
+// M2c supports: paragraphs, headings, bullet/ordered lists, blockquote,
+// fenced + indented code blocks, horizontal rule. Inline marks: bold,
+// italic, code, strike. Underline tags pass through as literal text.
 func ParseMarkdown(src string) *Document {
 	if strings.TrimSpace(src) == "" {
 		return New()
@@ -26,18 +27,7 @@ func ParseMarkdown(src string) *Document {
 
 	d := &Document{}
 	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
-		switch node := n.(type) {
-		case *ast.Paragraph:
-			d.Blocks = append(d.Blocks, paragraphFromAST(node, source))
-		default:
-			raw := strings.TrimRight(extractRawText(node, source), "\n")
-			if raw != "" {
-				d.Blocks = append(d.Blocks, Block{
-					Type:    BlockParagraph,
-					Inlines: []Inline{{Text: raw}},
-				})
-			}
-		}
+		d.Blocks = append(d.Blocks, blocksFromAST(n, source)...)
 	}
 	if len(d.Blocks) == 0 {
 		return New()
@@ -45,10 +35,147 @@ func ParseMarkdown(src string) *Document {
 	return d
 }
 
+// blocksFromAST converts one top-level AST node into one or more of our
+// Blocks. Lists contribute one container block; everything else contributes
+// a single block.
+func blocksFromAST(n ast.Node, source []byte) []Block {
+	switch node := n.(type) {
+	case *ast.Paragraph:
+		return []Block{paragraphFromAST(node, source)}
+	case *ast.Heading:
+		return []Block{headingFromAST(node, source)}
+	case *ast.List:
+		return listBlocksFromAST(node, source, 0)
+	case *ast.Blockquote:
+		return []Block{quoteFromAST(node, source)}
+	case *ast.FencedCodeBlock:
+		return []Block{codeBlockFromAST(node, source, true)}
+	case *ast.CodeBlock:
+		return []Block{codeBlockFromAST(node, source, false)}
+	case *ast.ThematicBreak:
+		return []Block{{Type: BlockHR, Inlines: []Inline{{}}}}
+	default:
+		raw := strings.TrimRight(extractRawText(node, source), "\n")
+		if raw == "" {
+			return nil
+		}
+		return []Block{{Type: BlockParagraph, Inlines: []Inline{{Text: raw}}}}
+	}
+}
+
 func paragraphFromAST(p *ast.Paragraph, source []byte) Block {
 	var inlines []Inline
 	walkInlines(p, source, 0, &inlines)
 	return Block{Type: BlockParagraph, Inlines: collapseInlines(inlines)}
+}
+
+func headingFromAST(h *ast.Heading, source []byte) Block {
+	var inlines []Inline
+	walkInlines(h, source, 0, &inlines)
+	return Block{
+		Type:    BlockHeading,
+		Inlines: collapseInlines(inlines),
+		Meta:    map[string]any{"level": h.Level},
+	}
+}
+
+// listBlocksFromAST flattens an AST list (possibly nested) into a sequence
+// of top-level BlockListItem blocks. Each item carries Meta:
+//   - "list_kind": "bullet" | "ordered"
+//   - "depth":     int (0 for top-level lists, +1 per nesting)
+//   - "index":     int (1-based; only set for ordered lists)
+//
+// This keeps the layout layer flat — no recursive walk needed for
+// rendering — while the writer reconstitutes the original markdown by
+// grouping consecutive items.
+func listBlocksFromAST(l *ast.List, source []byte, depth int) []Block {
+	kind := "bullet"
+	startIdx := 1
+	if l.IsOrdered() {
+		kind = "ordered"
+		startIdx = l.Start
+		if startIdx <= 0 {
+			startIdx = 1
+		}
+	}
+	var out []Block
+	i := 0
+	for c := l.FirstChild(); c != nil; c = c.NextSibling() {
+		li, ok := c.(*ast.ListItem)
+		if !ok {
+			continue
+		}
+		item := listItemFromAST(li, source, kind, depth, startIdx+i)
+		out = append(out, item.item)
+		out = append(out, item.nested...)
+		i++
+	}
+	return out
+}
+
+type listItemResult struct {
+	item   Block
+	nested []Block
+}
+
+func listItemFromAST(li *ast.ListItem, source []byte, kind string, depth, index int) listItemResult {
+	var inlines []Inline
+	var nested []Block
+	for c := li.FirstChild(); c != nil; c = c.NextSibling() {
+		switch cc := c.(type) {
+		case *ast.Paragraph, *ast.TextBlock:
+			walkInlines(cc, source, 0, &inlines)
+		case *ast.List:
+			nested = append(nested, listBlocksFromAST(cc, source, depth+1)...)
+		default:
+			walkInlines(cc, source, 0, &inlines)
+		}
+	}
+	meta := map[string]any{
+		"list_kind": kind,
+		"depth":     depth,
+	}
+	if kind == "ordered" {
+		meta["index"] = index
+	}
+	return listItemResult{
+		item: Block{Type: BlockListItem, Inlines: collapseInlines(inlines), Meta: meta},
+		nested: nested,
+	}
+}
+
+func quoteFromAST(q *ast.Blockquote, source []byte) Block {
+	// Flatten the quote into a single block whose inlines are the
+	// concatenated text of its inner paragraphs (separated by '\n').
+	var inlines []Inline
+	first := true
+	for c := q.FirstChild(); c != nil; c = c.NextSibling() {
+		if !first {
+			inlines = append(inlines, Inline{Text: "\n"})
+		}
+		first = false
+		walkInlines(c, source, 0, &inlines)
+	}
+	return Block{Type: BlockQuote, Inlines: collapseInlines(inlines)}
+}
+
+func codeBlockFromAST(n ast.Node, source []byte, fenced bool) Block {
+	var sb strings.Builder
+	lines := n.Lines()
+	if lines != nil {
+		for i := 0; i < lines.Len(); i++ {
+			seg := lines.At(i)
+			sb.Write(seg.Value(source))
+		}
+	}
+	body := strings.TrimRight(sb.String(), "\n")
+	meta := map[string]any{"fenced": fenced}
+	if fcb, ok := n.(*ast.FencedCodeBlock); ok {
+		if lang := string(fcb.Language(source)); lang != "" {
+			meta["lang"] = lang
+		}
+	}
+	return Block{Type: BlockCodeBlock, Inlines: []Inline{{Text: body}}, Meta: meta}
 }
 
 // walkInlines emits Inlines for the children of node, OR'ing curMarks into
@@ -71,7 +198,6 @@ func walkInlines(node ast.Node, source []byte, curMarks Mark, out *[]Inline) {
 			}
 			walkInlines(t, source, m, out)
 		case *ast.CodeSpan:
-			// CodeSpan children are Text nodes; collect their literal value.
 			var sb strings.Builder
 			for cc := t.FirstChild(); cc != nil; cc = cc.NextSibling() {
 				if tx, ok := cc.(*ast.Text); ok {
@@ -81,8 +207,6 @@ func walkInlines(node ast.Node, source []byte, curMarks Mark, out *[]Inline) {
 			if s := sb.String(); s != "" {
 				*out = append(*out, Inline{Text: s, Marks: curMarks | MarkCode})
 			}
-		case *ast.RawHTML:
-			handleRawHTML(t, source, curMarks, out)
 		case *exast.Strikethrough:
 			walkInlines(t, source, curMarks|MarkStrike, out)
 		default:
@@ -91,24 +215,6 @@ func walkInlines(node ast.Node, source []byte, curMarks Mark, out *[]Inline) {
 	}
 }
 
-// handleRawHTML recognizes a tiny subset: <u> opens underline mode for the
-// sibling text until the next </u>. Implemented by emitting a sentinel mark
-// transition via the underlineToggle map below; here we just skip the tag
-// itself.
-func handleRawHTML(n *ast.RawHTML, source []byte, _ Mark, _ *[]Inline) {
-	// We intentionally do not look at <u> tags here. Underline round-trips
-	// through HTML inline tags, but parsing raw HTML segments that span
-	// across goldmark's inline tree is brittle. For now: <u>...</u> in the
-	// source ends up as literal markup inside an Inline.Text, which means
-	// re-saving preserves it byte-for-byte. The editor toggle still applies
-	// MarkUnderline to selected runs in our model, and the writer emits
-	// <u>...</u> from MarkUnderline runs.
-	_ = n
-	_ = source
-}
-
-// collapseInlines merges adjacent inlines with identical marks. Empty
-// inlines are dropped except when the result would have zero items.
 func collapseInlines(in []Inline) []Inline {
 	if len(in) == 0 {
 		return []Inline{{}}

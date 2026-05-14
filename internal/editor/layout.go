@@ -11,25 +11,22 @@ import (
 
 // visualLine is one wrapped line of text on screen. It belongs to exactly
 // one block (by blockIdx) and covers a byte range within that block's plain
-// text, which is also the range we use for caret offset math.
+// text. The cached style is the block-level style applicable to this line
+// (font size, base bold flag for headings, etc.).
 type visualLine struct {
 	blockIdx  int
-	text      string  // exact characters in this line, no trailing newline
+	text      string
 	startByte int     // byte offset within block's plain text
-	endByte   int     // byte offset within block's plain text (exclusive)
-	x         float32 // left edge (relative to widget origin)
+	endByte   int     // exclusive
+	x         float32 // left edge of text content
 	y         float32 // top edge
 	width     float32 // measured pixel width of text
 	height    float32 // line box height
-	// hardBreak is true when this line was followed by a forced newline (a
-	// soft line break inside the source paragraph). False when the break was
-	// inserted by word-wrap. M1 treats both identically for navigation; we
-	// keep the flag for future use.
+	style     doc.BlockStyle
 	hardBreak bool
 }
 
 // layout produces the line table for the given document at the given width.
-// It is pure: same inputs always yield the same lines.
 func layout(d *doc.Document, contentWidth float32) []visualLine {
 	if contentWidth < minContentWidth {
 		contentWidth = minContentWidth
@@ -37,77 +34,64 @@ func layout(d *doc.Document, contentWidth float32) []visualLine {
 	var lines []visualLine
 	y := editorVPadding
 	for bi, b := range d.Blocks {
-		blockLines := wrapBlock(bi, b, contentWidth)
+		style := doc.StyleForBlock(b)
+		blockLines := wrapBlock(bi, b, style, contentWidth)
 		for i := range blockLines {
-			blockLines[i].x = editorHPadding
+			blockLines[i].x = editorHPadding + style.Indent
 			blockLines[i].y = y
-			blockLines[i].height = lineHeight
-			y += lineHeight
+			blockLines[i].height = style.LineHeight
+			blockLines[i].style = style
+			y += style.LineHeight
 		}
 		lines = append(lines, blockLines...)
-		y += paragraphGap
+		y += style.GapBelow
 	}
 	return lines
 }
 
-// wrapBlock greedily word-wraps the block's plain text into one or more
-// visualLines. Empty paragraphs still produce one zero-width line so the
-// caret has somewhere to land.
-func wrapBlock(blockIdx int, b doc.Block, width float32) []visualLine {
+func wrapBlock(blockIdx int, b doc.Block, style doc.BlockStyle, width float32) []visualLine {
 	text := b.PlainText()
 	if text == "" {
 		return []visualLine{{blockIdx: blockIdx, text: "", startByte: 0, endByte: 0}}
 	}
-
 	var lines []visualLine
-	// First split on hard line breaks (explicit \n inside the block), then
-	// word-wrap each segment.
 	segs := strings.Split(text, "\n")
 	offset := 0
 	for si, seg := range segs {
-		wrapped := wrapLine(blockIdx, seg, offset, width)
-		// Mark hard break on the last wrapped line of each segment except the
-		// final one (since the trailing \n belongs to the next segment).
+		wrapped := wrapLine(blockIdx, seg, offset, style, width)
 		if si < len(segs)-1 && len(wrapped) > 0 {
 			wrapped[len(wrapped)-1].hardBreak = true
 		}
 		lines = append(lines, wrapped...)
 		offset += len(seg)
 		if si < len(segs)-1 {
-			offset++ // for the consumed '\n'
+			offset++
 		}
 	}
 	return lines
 }
 
-// wrapLine word-wraps a single logical line (no embedded \n). The returned
-// visualLines carry byte offsets relative to the *block's* plain text, so
-// `baseOffset` is added to whatever local position we compute.
-func wrapLine(blockIdx int, line string, baseOffset int, width float32) []visualLine {
+func wrapLine(blockIdx int, line string, baseOffset int, style doc.BlockStyle, width float32) []visualLine {
 	if line == "" {
 		return []visualLine{{blockIdx: blockIdx, text: "", startByte: baseOffset, endByte: baseOffset}}
 	}
-	available := width - 2*editorHPadding
+	available := width - 2*editorHPadding - style.Indent
 	if available < 50 {
 		available = 50
 	}
+	textStyle := blockTextStyle(style)
 
 	var out []visualLine
-	style := fyne.TextStyle{}
-	// Greedy: track the current line as a [start, end) byte range within `line`.
 	start := 0
 	cursor := 0
 	for cursor < len(line) {
 		wordStart, wordEnd := nextSegment(line, cursor)
 		candidate := line[start:wordEnd]
-		w := fyne.MeasureText(candidate, fontSize, style).Width
+		w := fyne.MeasureText(candidate, style.FontSize, textStyle).Width
 		if w <= available || start == wordStart {
-			// Fits, or we'd produce an empty line — accept and continue.
 			cursor = wordEnd
 			continue
 		}
-		// Doesn't fit. Flush [start, wordStart) as a line, start a new one at
-		// wordStart (skipping any leading whitespace we just broke on).
 		end := wordStart
 		for end > start && isWrapBreakable(line[end-1]) {
 			end--
@@ -116,7 +100,7 @@ func wrapLine(blockIdx int, line string, baseOffset int, width float32) []visual
 			end = wordStart
 		}
 		seg := line[start:end]
-		segW := fyne.MeasureText(seg, fontSize, style).Width
+		segW := fyne.MeasureText(seg, style.FontSize, textStyle).Width
 		out = append(out, visualLine{
 			blockIdx:  blockIdx,
 			text:      seg,
@@ -129,7 +113,7 @@ func wrapLine(blockIdx int, line string, baseOffset int, width float32) []visual
 	}
 	if start < len(line) {
 		seg := line[start:]
-		segW := fyne.MeasureText(seg, fontSize, style).Width
+		segW := fyne.MeasureText(seg, style.FontSize, textStyle).Width
 		out = append(out, visualLine{
 			blockIdx:  blockIdx,
 			text:      seg,
@@ -139,20 +123,11 @@ func wrapLine(blockIdx int, line string, baseOffset int, width float32) []visual
 		})
 	}
 	if len(out) == 0 {
-		out = append(out, visualLine{
-			blockIdx:  blockIdx,
-			startByte: baseOffset,
-			endByte:   baseOffset,
-		})
+		out = append(out, visualLine{blockIdx: blockIdx, startByte: baseOffset, endByte: baseOffset})
 	}
 	return out
 }
 
-// nextSegment returns the byte range [wordStart, wordEnd) describing the
-// next "atomic" chunk we consider for wrapping: any whitespace run plus the
-// following non-whitespace run. We don't break inside a non-whitespace run
-// unless it alone exceeds the line width (handled by the start==wordStart
-// guard in wrapLine).
 func nextSegment(s string, from int) (int, int) {
 	i := from
 	for i < len(s) && isWrapBreakable(s[i]) {
@@ -167,22 +142,14 @@ func nextSegment(s string, from int) (int, int) {
 		i += size
 	}
 	if start == from {
-		// Pure non-whitespace run from the very start; no leading space.
 		return start, i
 	}
 	return from, i
 }
 
-func isWrapBreakable(b byte) bool {
-	return b == ' ' || b == '\t'
-}
+func isWrapBreakable(b byte) bool        { return b == ' ' || b == '\t' }
+func isWrapBreakableRune(r rune) bool    { return r == ' ' || r == '\t' }
 
-func isWrapBreakableRune(r rune) bool {
-	return r == ' ' || r == '\t'
-}
-
-// lineAtY returns the index of the visual line containing y, clamped to the
-// valid range. Used for click positioning.
 func lineAtY(lines []visualLine, y float32) int {
 	if len(lines) == 0 {
 		return -1
@@ -199,38 +166,36 @@ func lineAtY(lines []visualLine, y float32) int {
 }
 
 // offsetAtX returns the rune offset within the line's text closest to x.
-// Used for click positioning. Walks runes left-to-right measuring cumulative
-// width; this is O(n) per line which is fine since lines are short.
 func offsetAtX(line visualLine, x float32) int {
 	target := x - line.x
 	if target <= 0 {
 		return 0
 	}
-	style := fyne.TextStyle{}
+	textStyle := blockTextStyle(line.style)
 	text := line.text
-	if target >= fyne.MeasureText(text, fontSize, style).Width {
+	size := line.style.FontSize
+	if size == 0 {
+		size = fontSize
+	}
+	if target >= fyne.MeasureText(text, size, textStyle).Width {
 		return len(text)
 	}
 	var prev float32
 	for i := 0; i < len(text); {
-		_, size := utf8.DecodeRuneInString(text[i:])
-		w := fyne.MeasureText(text[:i+size], fontSize, style).Width
+		_, sz := utf8.DecodeRuneInString(text[i:])
+		w := fyne.MeasureText(text[:i+sz], size, textStyle).Width
 		if w >= target {
-			// Snap to whichever side is closer.
 			if w-target < target-prev {
-				return i + size
+				return i + sz
 			}
 			return i
 		}
 		prev = w
-		i += size
+		i += sz
 	}
 	return len(text)
 }
 
-// lineForPosition finds the visual line containing the given caret position
-// inside its block. The position's offset is the rune offset within the
-// block's plain text.
 func lineForPosition(lines []visualLine, blockIdx, byteOffset int) int {
 	last := -1
 	for i, ln := range lines {
@@ -241,17 +206,10 @@ func lineForPosition(lines []visualLine, blockIdx, byteOffset int) int {
 			continue
 		}
 		last = i
-		// Caret sits on the line that contains its offset. End-of-line edge
-		// case: an offset equal to a line's endByte belongs to *that* line
-		// unless the next line is also in this block and starts at the same
-		// byte (i.e. wrap point) — then prefer the next line so the caret
-		// shows at the start of the wrapped continuation, matching most
-		// editors.
 		if byteOffset >= ln.startByte && byteOffset < ln.endByte {
 			return i
 		}
 		if byteOffset == ln.endByte {
-			// Look ahead.
 			if i+1 < len(lines) && lines[i+1].blockIdx == blockIdx && lines[i+1].startByte == ln.endByte {
 				continue
 			}
@@ -261,8 +219,6 @@ func lineForPosition(lines []visualLine, blockIdx, byteOffset int) int {
 	return last
 }
 
-// xForOffset returns the X coordinate (relative to widget origin) of the
-// caret at the given rune offset within the given line.
 func xForOffset(line visualLine, byteOffset int) float32 {
 	if byteOffset <= line.startByte {
 		return line.x
@@ -271,38 +227,50 @@ func xForOffset(line visualLine, byteOffset int) float32 {
 		return line.x + line.width
 	}
 	local := byteOffset - line.startByte
-	style := fyne.TextStyle{}
-	return line.x + fyne.MeasureText(line.text[:local], fontSize, style).Width
+	textStyle := blockTextStyle(line.style)
+	size := line.style.FontSize
+	if size == 0 {
+		size = fontSize
+	}
+	return line.x + fyne.MeasureText(line.text[:local], size, textStyle).Width
 }
 
-// styleRun is one styled segment of a visual line. The renderer emits one
-// canvas.Text per styleRun. Coordinates are widget-relative.
+// blockTextStyle returns the base fyne.TextStyle implied by the block style
+// alone (no inline marks).
+func blockTextStyle(s doc.BlockStyle) fyne.TextStyle {
+	return fyne.TextStyle{Bold: s.Bold, Monospace: s.Monospace}
+}
+
+// styleRun is one styled segment of a visual line.
 type styleRun struct {
-	text  string
-	marks doc.Mark
-	x     float32 // left edge
-	y     float32 // top edge (= line.y)
-	w     float32 // measured width
-	h     float32 // = lineHeight
+	text     string
+	marks    doc.Mark
+	fontSize float32
+	style    fyne.TextStyle
+	x        float32
+	y        float32
+	w        float32
+	h        float32
 }
 
 // decomposeLine splits a visual line into styled runs by walking the inlines
-// that cover its byte range. Each contiguous slice of bytes belonging to one
-// inline becomes a run.
+// that cover its byte range.
 func decomposeLine(line visualLine, b doc.Block) []styleRun {
 	if len(b.Inlines) == 0 || line.text == "" {
 		return nil
 	}
+	base := blockTextStyle(line.style)
+	size := line.style.FontSize
+	if size == 0 {
+		size = fontSize
+	}
 	var runs []styleRun
-	// Walk inlines, tracking consumed bytes; emit a run for each that
-	// intersects [line.startByte, line.endByte).
 	consumed := 0
 	xCursor := line.x
 	for _, in := range b.Inlines {
 		inlineStart := consumed
 		inlineEnd := consumed + len(in.Text)
 		consumed = inlineEnd
-
 		start := line.startByte
 		if inlineStart > start {
 			start = inlineStart
@@ -320,28 +288,28 @@ func decomposeLine(line visualLine, b doc.Block) []styleRun {
 		localFrom := start - inlineStart
 		localTo := end - inlineStart
 		txt := in.Text[localFrom:localTo]
-		style := textStyleFor(in.Marks)
-		w := fyne.MeasureText(txt, fontSize, style).Width
+		style := mergeStyle(base, in.Marks)
+		w := fyne.MeasureText(txt, size, style).Width
 		runs = append(runs, styleRun{
-			text:  txt,
-			marks: in.Marks,
-			x:     xCursor,
-			y:     line.y,
-			w:     w,
-			h:     line.height,
+			text:     txt,
+			marks:    in.Marks,
+			fontSize: size,
+			style:    style,
+			x:        xCursor,
+			y:        line.y,
+			w:        w,
+			h:        line.height,
 		})
 		xCursor += w
 	}
 	return runs
 }
 
-// textStyleFor converts our Mark bitset into the subset of fyne.TextStyle we
-// can express via canvas.Text. Underline/Strike require manual line drawing
-// (handled by the renderer separately).
-func textStyleFor(m doc.Mark) fyne.TextStyle {
+// mergeStyle combines the block-level base style with inline marks.
+func mergeStyle(base fyne.TextStyle, m doc.Mark) fyne.TextStyle {
 	return fyne.TextStyle{
-		Bold:      m.Has(doc.MarkBold),
-		Italic:    m.Has(doc.MarkItalic),
-		Monospace: m.Has(doc.MarkCode),
+		Bold:      base.Bold || m.Has(doc.MarkBold),
+		Italic:    base.Italic || m.Has(doc.MarkItalic),
+		Monospace: base.Monospace || m.Has(doc.MarkCode),
 	}
 }

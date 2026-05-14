@@ -46,6 +46,61 @@ func TestParseExtractsMarks(t *testing.T) {
 	}
 }
 
+func TestRoundTripHeadings(t *testing.T) {
+	cases := []string{
+		"# Title\n",
+		"## Subtitle\n",
+		"### Section\n",
+		"# Title\n\nSome body text\n",
+	}
+	for _, in := range cases {
+		out := WriteMarkdown(ParseMarkdown(in))
+		if out != in {
+			t.Errorf("heading round-trip:\nin:  %q\nout: %q", in, out)
+		}
+	}
+}
+
+func TestRoundTripQuote(t *testing.T) {
+	in := "> This is a quote\n"
+	out := WriteMarkdown(ParseMarkdown(in))
+	if out != in {
+		t.Errorf("quote round-trip:\nin:  %q\nout: %q", in, out)
+	}
+}
+
+func TestRoundTripCodeBlock(t *testing.T) {
+	in := "```\ncode line\n```\n"
+	out := WriteMarkdown(ParseMarkdown(in))
+	if out != in {
+		t.Errorf("code-block round-trip:\nin:  %q\nout: %q", in, out)
+	}
+}
+
+func TestRoundTripHR(t *testing.T) {
+	in := "before\n\n---\n\nafter\n"
+	out := WriteMarkdown(ParseMarkdown(in))
+	if out != in {
+		t.Errorf("HR round-trip:\nin:  %q\nout: %q", in, out)
+	}
+}
+
+func TestRoundTripBulletList(t *testing.T) {
+	in := "- one\n- two\n- three\n"
+	out := WriteMarkdown(ParseMarkdown(in))
+	if out != in {
+		t.Errorf("bullet-list round-trip:\nin:  %q\nout: %q", in, out)
+	}
+}
+
+func TestRoundTripOrderedList(t *testing.T) {
+	in := "1. first\n2. second\n3. third\n"
+	out := WriteMarkdown(ParseMarkdown(in))
+	if out != in {
+		t.Errorf("ordered-list round-trip:\nin:  %q\nout: %q", in, out)
+	}
+}
+
 func TestParseUnderlineEmitsViaWriter(t *testing.T) {
 	// Verify we can emit underline correctly even though we don't currently
 	// parse <u>...</u> (the reader leaves it as literal text). The writer

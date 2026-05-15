@@ -2,6 +2,11 @@
 
 Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
 
+> **Resuming this project?** Read [README.md](README.md) first — it's the
+> source of truth for current state, architectural conventions, and the
+> next milestone's design notes. Commit messages (`git log`) document
+> each milestone in detail.
+
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
 ## 1. Think Before Coding

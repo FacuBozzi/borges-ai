@@ -32,6 +32,7 @@ func NewRegistry(cfg config.Config) *Registry {
 
 func (r *Registry) Active() Provider           { return r.providers[r.active] }
 func (r *Registry) ActiveName() string         { return r.active }
+func (r *Registry) Get(name string) Provider   { return r.providers[name] }
 func (r *Registry) Available() []string {
 	names := make([]string, 0, len(r.providers))
 	for n := range r.providers {

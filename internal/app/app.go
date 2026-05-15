@@ -31,9 +31,21 @@ type App struct {
 	registry *ai.Registry
 
 	editor       *editor.RichEditor
+	sidebar      *ui.IssuesSidebar
 	titleLabel   *widget.Label
+	statusLabel  *widget.Label
 	currentPath  string // empty until first save
 	dirty        bool
+	checksRunning bool
+
+	// User-overridable model names. Empty string means fall back to cfg.
+	anthropicModel string
+	openaiModel    string
+	themeVariant   string // "" | "system" | "light" | "dark"
+
+	// Currently-registered custom-prompt shortcuts, tracked so we can
+	// unregister them when the library changes.
+	promptShortcuts []fyne.Shortcut
 }
 
 func New() (*App, error) {
@@ -45,9 +57,11 @@ func New() (*App, error) {
 	reg := ai.NewRegistry(cfg)
 
 	fa := fyneapp.NewWithID("dev.facubozzi.fynewriter")
-	fa.Settings().SetTheme(ui.NewTheme())
 
 	a := &App{fyne: fa, cfg: cfg, store: st, registry: reg}
+	a.loadPersistedSettings()
+	fa.Settings().SetTheme(ui.NewThemeWithVariant(ui.ThemeVariant(a.themeVariant)))
+
 	a.window = fa.NewWindow("Fyne Writer")
 	a.window.Resize(fyne.NewSize(1100, 720))
 	a.window.SetContent(a.buildContent())
@@ -56,7 +70,20 @@ func New() (*App, error) {
 	a.window.Canvas().Focus(a.editor)
 	a.registerEditorShortcuts()
 	a.installContextMenuExtender()
+	a.refreshPromptShortcuts()
 	return a, nil
+}
+
+// loadPersistedSettings reads previously-saved provider/model/theme choices
+// from the SQLite settings table and applies them to the registry + app
+// state. Missing keys leave the .env defaults in place.
+func (a *App) loadPersistedSettings() {
+	if v, _ := a.store.GetSetting(store.KeyActiveProvider); v != "" {
+		a.registry.SetActive(v)
+	}
+	a.anthropicModel, _ = a.store.GetSetting(store.KeyAnthropicModel)
+	a.openaiModel, _ = a.store.GetSetting(store.KeyOpenAIModel)
+	a.themeVariant, _ = a.store.GetSetting(store.KeyThemeVariant)
 }
 
 // registerEditorShortcuts wires the editor's mark-toggle shortcuts
@@ -86,17 +113,36 @@ func (a *App) Registry() *ai.Registry { return a.registry }
 func (a *App) buildContent() fyne.CanvasObject {
 	a.editor = editor.New(doc.New())
 	a.editor.OnChanged(a.onDocChanged)
+	a.editor.OnIssuesChanged(func() { fyne.Do(a.updateSidebarFromEditor) })
+
+	a.sidebar = ui.NewIssuesSidebar()
+	a.sidebar.OnCheck = a.runDocumentCheck
+	a.sidebar.OnClear = func() { a.editor.ClearIssues() }
+	a.sidebar.OnAccept = func(id int64, replacement string) {
+		a.editor.ApplyIssueFix(id, replacement)
+	}
+	a.sidebar.OnReject = func(id int64) { a.editor.DismissIssue(id) }
 
 	a.titleLabel = widget.NewLabel("Untitled")
 	a.titleLabel.TextStyle = fyne.TextStyle{Bold: true}
 
-	provider := a.registry.ActiveName()
-	status := widget.NewLabel(fmt.Sprintf("Provider: %s", provider))
+	a.statusLabel = widget.NewLabel("")
+	a.refreshStatus()
 
 	top := container.NewBorder(nil, nil, a.titleLabel, nil)
-	bottom := container.NewBorder(nil, nil, status, nil)
+	bottom := container.NewBorder(nil, nil, a.statusLabel, nil)
 	scroll := container.NewVScroll(a.editor)
-	return container.NewBorder(top, bottom, nil, nil, scroll)
+	split := container.NewHSplit(scroll, a.sidebar)
+	split.SetOffset(0.74)
+	return container.NewBorder(top, bottom, nil, nil, split)
+}
+
+func (a *App) refreshStatus() {
+	if a.statusLabel == nil {
+		return
+	}
+	a.statusLabel.SetText(fmt.Sprintf("Provider: %s  ·  Model: %s",
+		a.registry.ActiveName(), a.modelFor(a.registry.ActiveName())))
 }
 
 func (a *App) buildMenu() *fyne.MainMenu {
@@ -111,11 +157,16 @@ func (a *App) buildMenu() *fyne.MainMenu {
 
 	paletteItem := fyne.NewMenuItem("Command Palette...", a.openCommandPalette)
 	paletteItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierShortcutDefault}
+	checkItem := fyne.NewMenuItem("Check Document", a.runDocumentCheck)
+	checkItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierShortcutDefault | fyne.KeyModifierShift}
 	contextItem := fyne.NewMenuItem("Background Instructions...", a.editContext)
+	promptsItem := fyne.NewMenuItem("Prompts Library...", a.openPromptsLibrary)
+	settingsItem := fyne.NewMenuItem("Settings...", a.openSettings)
+	settingsItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyComma, Modifier: fyne.KeyModifierShortcutDefault}
 
 	return fyne.NewMainMenu(
 		fyne.NewMenu("File", newItem, openItem, saveItem, saveAsItem),
-		fyne.NewMenu("AI", paletteItem, contextItem),
+		fyne.NewMenu("AI", paletteItem, checkItem, contextItem, promptsItem, fyne.NewMenuItemSeparator(), settingsItem),
 	)
 }
 

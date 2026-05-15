@@ -111,8 +111,39 @@ func (a *App) openCommandPalette() {
 		})
 	}
 
+	// User-defined prompts come next, after the built-ins.
+	if customs, err := a.store.ListPrompts(); err == nil {
+		for _, p := range customs {
+			p := p
+			disabled := p.RequiresSelection && !hasSelection
+			hint := ""
+			if disabled {
+				hint = "select some text first"
+			}
+			subtitle := p.Description
+			if p.Hotkey != "" {
+				if subtitle != "" {
+					subtitle = subtitle + "  ·  "
+				}
+				subtitle = subtitle + p.Hotkey
+			}
+			cmds = append(cmds, ui.PaletteCommand{
+				Title:        p.Name,
+				Subtitle:     subtitle,
+				Disabled:     disabled,
+				DisabledHint: hint,
+				Run:          func() { a.runCustomPrompt(p) },
+			})
+		}
+	}
+
 	// Always-available app commands.
 	cmds = append(cmds,
+		ui.PaletteCommand{
+			Title:    "Check Document",
+			Subtitle: "Scan the document for grammar, clarity, and style issues.",
+			Run:      a.runDocumentCheck,
+		},
 		ui.PaletteCommand{
 			Title:    "Background Instructions...",
 			Subtitle: "Edit the per-document AI guidance (audience, voice, etc.).",
@@ -137,6 +168,16 @@ func (a *App) openCommandPalette() {
 			Title:    "Save As...",
 			Subtitle: "Save the current document to a new file.",
 			Run:      a.fileSaveAs,
+		},
+		ui.PaletteCommand{
+			Title:    "Prompts Library...",
+			Subtitle: "Create, edit, or delete your custom AI prompts.",
+			Run:      a.openPromptsLibrary,
+		},
+		ui.PaletteCommand{
+			Title:    "Settings...",
+			Subtitle: "Choose provider, model, and theme.",
+			Run:      a.openSettings,
 		},
 	)
 
@@ -202,11 +243,18 @@ func (a *App) runAICommand(kind ai.CommandKind) {
 }
 
 // modelFor returns the configured default model for the given provider.
+// User overrides from the Settings dialog take precedence over .env defaults.
 func (a *App) modelFor(provider string) string {
 	switch provider {
 	case ai.ProviderAnthropic:
+		if a.anthropicModel != "" {
+			return a.anthropicModel
+		}
 		return a.cfg.AnthropicModel
 	case ai.ProviderOpenAI:
+		if a.openaiModel != "" {
+			return a.openaiModel
+		}
 		return a.cfg.OpenAIModel
 	default:
 		return ""
@@ -250,16 +298,28 @@ func (a *App) editContext() {
 
 // installContextMenuExtender hooks AI items into the editor's right-click
 // menu: Paraphrase / Shorten / Expand / Fix Tone when there's a selection,
-// Synonyms... when the click was on a word.
+// Synonyms... when the click was on a word. Custom prompts that require a
+// selection are appended after the built-ins so users can launch their own
+// commands the same way.
 func (a *App) installContextMenuExtender() {
 	a.editor.SetContextMenuExtender(func(t editor.ContextMenuTarget) []*fyne.MenuItem {
 		if t.HasSelection {
-			return []*fyne.MenuItem{
+			items := []*fyne.MenuItem{
 				fyne.NewMenuItem("Paraphrase", func() { a.runAICommand(ai.CmdParaphrase) }),
 				fyne.NewMenuItem("Shorten", func() { a.runAICommand(ai.CmdShorten) }),
 				fyne.NewMenuItem("Expand", func() { a.runAICommand(ai.CmdExpand) }),
 				fyne.NewMenuItem("Fix tone (formal)", func() { a.runAICommand(ai.CmdFixTone) }),
 			}
+			if customs, err := a.store.ListPrompts(); err == nil {
+				for _, p := range customs {
+					if !p.RequiresSelection {
+						continue
+					}
+					p := p
+					items = append(items, fyne.NewMenuItem(p.Name, func() { a.runCustomPrompt(p) }))
+				}
+			}
+			return items
 		}
 		if t.Word == "" || t.ReplaceWord == nil {
 			return nil

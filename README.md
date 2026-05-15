@@ -7,11 +7,36 @@ in Go on the [Fyne](https://github.com/fyne-io/fyne) toolkit.
 source of truth. Sections most relevant to picking up work:
 
 - [Current state — what works today](#current-state--what-works-today) — feature inventory.
-- [Not yet built (roadmap)](#not-yet-built-roadmap) — M4 is up next; design notes below.
+- [Not yet built (roadmap)](#not-yet-built-roadmap) — M5 is up next; design notes below.
 - [Architectural conventions](#architectural-conventions) — load-bearing patterns to follow.
-- [M4 design notes](#m4-design-notes) — concrete plan for the next milestone.
+- [M5 design notes](#m5-design-notes) — concrete plan for the next milestone.
 - [Why we chose what we chose](#why-we-chose-what-we-chose) — context behind the decisions.
 - `git log --oneline` — commit messages are detailed; each milestone is its own commit.
+
+## Pick up here — M4 manual verification
+
+M4 (Settings + Custom Prompts + AI Checks) landed but was only verified
+at the unit-test level — no one has driven the Fyne UI yet. Run the
+app and walk through these once before treating M4 as truly done:
+
+1. **Settings dialog** — cmd+, opens it. Switch provider, change a
+   model, flip the theme to light then dark then system. Restart and
+   confirm choices persist (`~/Library/Application Support/fyne-writer/fyne-writer.db`).
+2. **Prompts Library** — AI menu → Prompts Library. Create a prompt
+   with template `Rewrite this in pirate voice: {{.Selection}}` and a
+   hotkey like `Cmd+Shift+P`. Restart, confirm hotkey + palette entry
+   + right-click entry still work.
+3. **AI Checks** — Open a doc with a few typos / awkward phrases.
+   cmd+shift+K or sidebar "Check". Confirm: red zigzag underlines
+   appear; sidebar lists each issue with Accept / Dismiss; Accept
+   replaces the text in one undo step; editing the doc invalidates
+   stale issues.
+4. **Layout sanity** — drag the sidebar split divider; ensure the
+   editor + sidebar both stay usable. Open + save a markdown file to
+   make sure the new layout didn't break those flows.
+
+When all four are clean, delete this section. Anything that doesn't
+work → file a follow-up at the top of the Known limitations list.
 
 ## Run
 
@@ -32,9 +57,9 @@ input; the GUI still runs.
 
 ## Current state — what works today
 
-The custom rich-text editor and the flagship AI layer (M0–M3 in the
-internal milestone plan) are shipped. Local-storage features (versions,
-comments, custom prompts, settings UI) and the read-only-URL publishing
+The custom rich-text editor, the flagship AI layer, AI document checks,
+custom prompts, and the Settings dialog (M0–M4 in the internal milestone
+plan) are shipped. Versions, comments, and the read-only-URL publishing
 piece are not yet implemented.
 
 ### Editor surface
@@ -72,6 +97,9 @@ piece are not yet implemented.
 | **Fix tone (formal)** on selection | ✓ | Right-click or palette |
 | **Context-aware Synonyms** for a single word | ✓ | Right-click word → AI returns up to 8 synonyms that fit the sentence |
 | Per-document **Background Instructions** | ✓ | AI menu → Background Instructions; stored as YAML front-matter |
+| **Document checks** (grammar / clarity / style) | ✓ | cmd+shift+K or sidebar; wavy underline + Accept/Reject panel |
+| **Custom prompts library** | ✓ | AI menu → Prompts Library; text/template variables, optional hotkey, palette + right-click integration |
+| **Settings dialog** | ✓ | cmd+, ; provider + per-provider model + light/dark/system theme; persisted in SQLite |
 
 ### Storage
 
@@ -84,16 +112,14 @@ piece are not yet implemented.
 
 In rough order:
 
-- **M4 — AI Checks + Custom Prompts + Settings dialog.** Document-wide
-  grammar/style/clarity scan with inline underlines and a sidebar
-  Accept/Reject UI. User-defined prompt templates with variables and
-  hotkeys. Provider/model picker UI.
 - **M5 — Version history + Comments.** Auto-snapshot on save and on
   interval, browse + diff + restore. Anchor comments to text ranges
   with a sidebar list.
 - **M6 — Polish.** File-browser sidebar, status bar, keyboard shortcut
   cheatsheet, first-run onboarding, Inter font embedding, performance
-  pass on long documents.
+  pass on long documents. Also: replace Fyne's built-in file dialogs
+  with custom modals that handle Esc, and upgrade the issue underline
+  from straight zigzag to a smoother wavy curve.
 - **Deferred to v2 — read-only URL publishing.** Requires a backend
   service (out of scope for v1).
 
@@ -125,6 +151,23 @@ In rough order:
   Proper fix is a custom file picker that uses our `escEntry` pattern;
   queued for M6 polish. Our own modal popups (cmd+K, Synonyms, etc.)
   already handle Esc correctly.
+- **Document check sends the whole document as one chunk.** Truncated
+  to ~6k chars, so longer documents get a partial scan. Paragraph
+  chunking is deferred until the limit is hit in practice.
+- **Issue anchors must be unique within a single block.** Suggestions
+  whose anchor text appears more than once (within the same block or
+  across blocks) are silently dropped at resolution time, because
+  LLM-returned anchors can't reliably disambiguate. The system prompt
+  asks for ≥6-char anchors with surrounding context to reduce this.
+- **Editing the document drops invalidated issues.** Any issue whose
+  anchor text no longer matches at the recorded offset is removed
+  rather than re-resolved. Re-run the check after editing.
+- **Issue underline is a zigzag, not a true wave.** Built from short
+  `canvas.Line` segments. Visually adequate; upgrade to a smoother
+  curve is M6 polish.
+- **Custom-prompt hotkeys are limited to single letter / digit.** The
+  parser accepts `Cmd|Ctrl|Shift|Alt` modifiers plus one A–Z or 0–9
+  key. No function keys or punctuation yet.
 
 ## Architectural conventions
 
@@ -235,71 +278,55 @@ and gives the app a thread-safe callback.
   embeds `widget.Entry`, overrides `TypedKey` to intercept Esc and
   invoke `onEsc`. Future custom file dialogs will reuse it.
 
-## M4 design notes
+## M5 design notes
 
-M4 layers three things on the M3 foundation. Order is roughly
-independent; pick whichever piece feels most useful first.
+M5 adds two SQLite-backed features that ride alongside the document
+without changing the editor's core text model: version snapshots and
+anchored comments.
 
-### AI Checks
+### Version history
 
-Document-wide grammar / style / clarity pass.
+Auto-snapshot the document so the user can browse + diff + restore.
 
-- **Trigger:** sidebar "Check" button, command-palette entry "Check
-  document", or cmd+shift+K.
-- **Strategy:** chunk the document by paragraph (or 1k-token windows).
-  Per chunk, send a prompt asking the model to return JSON:
-  `{"issues":[{"anchor_text": "...", "type": "grammar|clarity|...",
-  "severity": "low|med|high", "suggestion": "..."}]}`.
-- **Anchor resolution:** LLMs can't reliably return offsets, so we
-  substring-search `anchor_text` in the chunk and recover the range.
-  Skip issues whose anchor doesn't uniquely resolve.
-- **Rendering:** each issue paints a wavy underline (`canvas.Line`
-  segments — extend `editor/renderer.go`'s decoration pool). Sidebar
-  panel lists them with `Accept` / `Reject` buttons; Accept calls
-  `BeginAIReplace`-style helper to swap the text.
-- **State:** issues live on the editor (`e.aiIssues []Issue`) so
-  document edits in their range invalidate them. Simplest: invalidate
-  any issue whose anchor range no longer contains its exact text.
-- **Files to add:** `internal/ai/checks.go` (orchestration + JSON
-  parser), `internal/editor/decorations.go` already exists in spirit
-  — extend it. Sidebar panel in `internal/ui/sidebar_panels.go`.
+- **Schema:** `versions(id, doc_path, snapshot_json, content_hash,
+  created_at)` already exists. Snapshots are full-document JSON
+  (`doc.Document` → `encoding/json`), keyed by absolute doc path.
+- **Triggers:** every `fileSave`, plus a periodic ticker that snapshots
+  if the document has changed since the last snapshot and at least N
+  seconds have elapsed. Dedup on `content_hash`.
+- **UI:** AI menu → "Version History..." opens a side panel listing
+  snapshots (relative time + hash). Selecting one shows a diff against
+  the current doc (start simple: unified text diff over PlainText).
+  A "Restore" button replaces the in-memory doc with the snapshot;
+  the editor calls `SetDocument` and the undo stack is preserved as
+  one entry so the user can cmd+Z out of the restore.
+- **Files to add:** `internal/store/versions.go` (CRUD + snapshot
+  helpers), `internal/ui/dialog_versions.go`, app wire-up in
+  `internal/app/versions.go`. Periodic snapshot lives on the App with
+  a `time.Ticker`.
+- **Watch out for:** snapshot size on long documents (10k+ words) —
+  the table can grow fast. Cap retained snapshots per doc to ~50 and
+  GC older ones.
 
-### Custom prompts library
+### Comments
 
-User-defined templates surface in the palette + right-click menu.
+Anchor free-text comments to byte ranges, with a sidebar list.
 
-- **Data model:** SQLite table already exists (`prompts(id, name,
-  description, template, hotkey, requires_selection, created_at)`).
-- **Template variables:** Go `text/template` syntax over the
-  `ai.PromptInputs` struct: `{{.Selection}}`, `{{.Document}}`,
-  `{{.Word}}`, `{{.Context}}`. Add new vars as needed.
-- **UI:** Prompts Library dialog (CRUD on the table). Each prompt
-  has: name, description, template, optional hotkey, requires-selection
-  flag.
-- **Surfacing:** when opening the palette, fetch saved prompts and add
-  them as `PaletteCommand` entries. For each one whose `hotkey` is set,
-  register it on the canvas the same way mark shortcuts are registered
-  in `app/app.go`.
-- **Files to add:** `internal/store/prompts.go` (CRUD), `internal/ui/
-  dialog_prompts.go`, hook into `openCommandPalette` in `app/
-  ai_actions.go`.
-
-### Settings dialog
-
-- **Persisted in SQLite** `settings(key, value)` table. Add
-  `internal/store/settings.go` with `Get(key)` / `Set(key, value)`
-  helpers.
-- **Surface:** AI menu → Settings... or cmd+,.
-- **Editable:** active provider (Anthropic / OpenAI), default model
-  per provider, theme variant override (system / light / dark), API
-  key override (only useful if user wants to switch keys without
-  editing `.env`).
-- **Hot-apply:** changing provider/model immediately updates the
-  registry's active provider. Theme changes via
-  `fyne.CurrentApp().Settings().SetTheme(...)`.
-- **Files to add:** `internal/store/settings.go`,
-  `internal/ui/dialog_settings.go`, registry expose a `SetActive` /
-  `SetModel` API (already exists for SetActive).
+- **Schema:** `comments(id, doc_path, anchor_text, range_start_hint,
+  range_end_hint, body, resolved, created_at)` already exists.
+- **UI:** right-click on a selection → "Add comment...", which opens
+  an inline popup. The sidebar (re-use the M4 sidebar shell) lists
+  open comments with author/timestamp and Resolve/Delete actions.
+- **Anchoring strategy:** same approach as AI issues. Store
+  `anchor_text` + the original byte offset as a hint; on doc load, try
+  the offset first; if the text doesn't match, fall back to a
+  substring search and update the hint.
+- **Files to add:** `internal/store/comments.go`, sidebar panel in
+  `internal/ui/sidebar_comments.go`, `internal/app/comments.go`.
+- **Reuse:** the editor's `editor.Issue` rendering path is a near
+  match for "decorate a byte range". Consider lifting it into a more
+  generic `editor.Annotation` so comments + issues share the
+  decoration pool without duplicating wavy-underline code.
 
 ## Why we chose what we chose
 
@@ -332,8 +359,11 @@ The decisions worth remembering when you're tempted to change them.
 cmd/fyne-writer/main.go            entry point, --check-ai flag
 internal/
   app/                             window, menus, AI workflow wiring
-    app.go                         lifecycle + file menu (cmd+N/O/S)
-    ai_actions.go                  cmd+K palette, paraphrase, synonyms
+    app.go                         lifecycle + file menu (cmd+N/O/S) + sidebar
+    ai_actions.go                  cmd+K palette, paraphrase, synonyms, right-click extender
+    checks.go                      document-check trigger + anchor resolution
+    prompts.go                     custom-prompt rendering, hotkey parser, library opener
+    settings.go                    settings dialog opener + hot-apply
     widgets.go                     shared widget helpers
   config/env.go                    .env loader, model defaults
   doc/                             document model — pure data
@@ -355,6 +385,7 @@ internal/
     shortcuts.go                   TypedShortcut, mark + block bindings
     context_menu.go                right-click menu + AI extension hook
     ai.go                          BeginAIReplace streaming handle
+    issues.go                      AI-check issue state + apply/dismiss + invalidation
     undo.go                        snapshot ring (500), coalescing
   ai/                              provider abstraction + prompts
     provider.go                    Provider interface, Request / Chunk
@@ -363,18 +394,27 @@ internal/
     mock.go                        offline / no-key fallback
     registry.go                    picks active provider from config
     templates.go                   built-in commands + prompt builders
-  store/db.go                      SQLite open + migrations
+    checks.go                      document-wide grammar/clarity prompt + JSON parser
+  store/
+    db.go                          SQLite open + migrations
+    settings.go                    KV helpers for the settings table
+    prompts.go                     CRUD on the prompts table
   ui/                              shared UI fragments
-    theme.go                       custom fyne.Theme (light + dark)
+    theme.go                       custom fyne.Theme (light + dark) + forced variant
     commandpalette.go              cmd+K modal popup
+    dialog_settings.go             Settings... dialog
+    dialog_prompts.go              Prompts Library dialog + per-prompt editor
+    sidebar_issues.go              AI-check sidebar widget (list + Accept/Reject)
 ```
 
-Tests live alongside the code they cover. As of M3:
+Tests live alongside the code they cover. As of M4:
 
 - `internal/doc/` — 22 tests (block helpers, mark + block round-trip,
   front-matter, clone, position).
 - `internal/editor/` — 14 tests (selection math, mutations, undo
   coalescing).
+- `internal/ai/` — JSON parser for `parseSuggestions`.
+- `internal/app/` — hotkey parser + unique-anchor resolver.
 
 ```sh
 go test ./...

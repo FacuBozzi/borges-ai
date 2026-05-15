@@ -19,6 +19,7 @@ type editorRenderer struct {
 
 	textObjs   []*canvas.Text      // pooled, one per styled run
 	deco       []*canvas.Line      // underline / strikethrough lines
+	issueDeco  []*canvas.Line      // wavy underline segments for AI-check issues
 	gutterText []*canvas.Text      // list bullets / numbers + block prefixes
 	blockBars  []*canvas.Rectangle // left-bar for quotes
 	blockBGs   []*canvas.Rectangle // background for code blocks
@@ -51,6 +52,7 @@ func (r *editorRenderer) Layout(size fyne.Size) {
 	lines := r.e.lines
 	sel := r.e.sel
 	focused := r.e.focused
+	issues := append([]Issue(nil), r.e.issues...)
 	r.e.mu.Unlock()
 
 	r.bg.Resize(size)
@@ -58,6 +60,7 @@ func (r *editorRenderer) Layout(size fyne.Size) {
 
 	r.syncContent(d, lines)
 	r.syncBlockDecorations(d, lines)
+	r.syncIssueUnderlines(lines, issues)
 	r.syncSelectionRects(lines, sel)
 	r.positionCaret(lines, sel, focused)
 }
@@ -75,7 +78,7 @@ func (r *editorRenderer) MinSize() fyne.Size {
 }
 
 func (r *editorRenderer) Objects() []fyne.CanvasObject {
-	out := make([]fyne.CanvasObject, 0, 2+len(r.selRects)+len(r.textObjs)+len(r.deco)+len(r.gutterText)+len(r.blockBars)+len(r.blockBGs)+len(r.hrLines))
+	out := make([]fyne.CanvasObject, 0, 2+len(r.selRects)+len(r.textObjs)+len(r.deco)+len(r.issueDeco)+len(r.gutterText)+len(r.blockBars)+len(r.blockBGs)+len(r.hrLines))
 	out = append(out, r.bg)
 	for _, s := range r.blockBGs {
 		out = append(out, s)
@@ -93,6 +96,9 @@ func (r *editorRenderer) Objects() []fyne.CanvasObject {
 		out = append(out, t)
 	}
 	for _, ln := range r.deco {
+		out = append(out, ln)
+	}
+	for _, ln := range r.issueDeco {
 		out = append(out, ln)
 	}
 	for _, ln := range r.hrLines {
@@ -115,10 +121,12 @@ func (r *editorRenderer) Refresh() {
 	lines := r.e.lines
 	sel := r.e.sel
 	focused := r.e.focused
+	issues := append([]Issue(nil), r.e.issues...)
 	r.e.mu.Unlock()
 
 	r.syncContent(d, lines)
 	r.syncBlockDecorations(d, lines)
+	r.syncIssueUnderlines(lines, issues)
 	r.syncSelectionRects(lines, sel)
 	r.positionCaret(lines, sel, focused)
 	for _, t := range r.textObjs {
@@ -128,6 +136,9 @@ func (r *editorRenderer) Refresh() {
 		t.Refresh()
 	}
 	for _, ln := range r.deco {
+		ln.Refresh()
+	}
+	for _, ln := range r.issueDeco {
 		ln.Refresh()
 	}
 	for _, s := range r.blockBars {
@@ -491,6 +502,87 @@ func (r *editorRenderer) positionCaret(lines []visualLine, sel doc.Selection, fo
 	r.caret.Move(fyne.NewPos(x, ln.y))
 	r.caret.Resize(fyne.NewSize(caretWidth, ln.height))
 	r.caret.Show()
+}
+
+// syncIssueUnderlines paints a wavy underline beneath every visual-line slice
+// that overlaps an AI-check issue's anchor range. Uses a separate canvas.Line
+// pool so it doesn't interfere with the per-mark underline/strike pool.
+func (r *editorRenderer) syncIssueUnderlines(lines []visualLine, issues []Issue) {
+	col := theme.Color(theme.ColorNameError)
+	const amplitude float32 = 1.6
+	const period float32 = 5
+
+	// Collect zigzag segments first, then allocate the line pool to fit.
+	type segPair struct{ p1, p2 fyne.Position }
+	var segs []segPair
+
+	for _, iss := range issues {
+		start := iss.Offset
+		end := iss.Offset + iss.Length
+		if end <= start {
+			continue
+		}
+		for _, ln := range lines {
+			if ln.blockIdx != iss.BlockIndex {
+				continue
+			}
+			lo := start
+			if ln.startByte > lo {
+				lo = ln.startByte
+			}
+			hi := end
+			if ln.endByte < hi {
+				hi = ln.endByte
+			}
+			if lo >= hi {
+				continue
+			}
+			x1 := xForOffset(ln, lo)
+			x2 := xForOffset(ln, hi)
+			if x2 <= x1 {
+				continue
+			}
+			y := ln.y + ln.height - 3
+			// Build a zigzag from x1 to x2 alternating above/below y.
+			x := x1
+			up := true
+			for x < x2 {
+				next := x + period/2
+				if next > x2 {
+					next = x2
+				}
+				var y1, y2 float32
+				if up {
+					y1, y2 = y+amplitude, y-amplitude
+				} else {
+					y1, y2 = y-amplitude, y+amplitude
+				}
+				segs = append(segs, segPair{
+					p1: fyne.NewPos(x, y1),
+					p2: fyne.NewPos(next, y2),
+				})
+				x = next
+				up = !up
+			}
+		}
+	}
+
+	for len(r.issueDeco) < len(segs) {
+		ln := canvas.NewLine(col)
+		ln.StrokeWidth = 1.4
+		r.issueDeco = append(r.issueDeco, ln)
+	}
+	for i, s := range segs {
+		ln := r.issueDeco[i]
+		ln.StrokeColor = col
+		ln.StrokeWidth = 1.4
+		ln.Position1 = s.p1
+		ln.Position2 = s.p2
+		ln.Show()
+	}
+	for i := len(segs); i < len(r.issueDeco); i++ {
+		r.issueDeco[i].Hide()
+	}
 }
 
 func (r *editorRenderer) startBlink() {

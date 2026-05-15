@@ -14,6 +14,42 @@ type FyneWriterTheme struct{}
 
 func NewTheme() fyne.Theme { return FyneWriterTheme{} }
 
+// ThemeVariant identifies a forced color scheme. "system" defers to Fyne's
+// own variant detection; "light" and "dark" override it.
+type ThemeVariant string
+
+const (
+	VariantSystem ThemeVariant = "system"
+	VariantLight  ThemeVariant = "light"
+	VariantDark   ThemeVariant = "dark"
+)
+
+// NewThemeWithVariant returns the FyneWriter theme, optionally pinned to a
+// specific color variant. VariantSystem falls back to the unwrapped theme.
+func NewThemeWithVariant(v ThemeVariant) fyne.Theme {
+	base := FyneWriterTheme{}
+	switch v {
+	case VariantLight:
+		return forcedVariant{base: base, variant: theme.VariantLight}
+	case VariantDark:
+		return forcedVariant{base: base, variant: theme.VariantDark}
+	}
+	return base
+}
+
+// forcedVariant wraps FyneWriterTheme and pins the variant passed to Color.
+type forcedVariant struct {
+	base    FyneWriterTheme
+	variant fyne.ThemeVariant
+}
+
+func (f forcedVariant) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) color.Color {
+	return f.base.Color(name, f.variant)
+}
+func (f forcedVariant) Font(s fyne.TextStyle) fyne.Resource     { return f.base.Font(s) }
+func (f forcedVariant) Icon(n fyne.ThemeIconName) fyne.Resource { return f.base.Icon(n) }
+func (f forcedVariant) Size(n fyne.ThemeSizeName) float32       { return f.base.Size(n) }
+
 var (
 	// Dark palette
 	darkBackground = color.NRGBA{0x0F, 0x11, 0x15, 0xFF}

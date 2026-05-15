@@ -76,6 +76,12 @@ type RichEditor struct {
 	// ctxExtender, when set by the app layer, supplies extra context-menu
 	// items (AI actions). See SetContextMenuExtender.
 	ctxExtender ContextMenuExtender
+
+	// issues are the active AI-check hints with resolved byte ranges. Edits
+	// to the document run them through validateIssues() and drop any whose
+	// anchor text no longer matches.
+	issues          []Issue
+	onIssuesChanged func()
 }
 
 // New creates a RichEditor populated with the given document. Pass doc.New()

@@ -32,6 +32,7 @@ type App struct {
 
 	editor          *editor.RichEditor
 	sidebar         *ui.IssuesSidebar
+	commentsSidebar *ui.CommentsSidebar
 	versionsSidebar *ui.VersionsSidebar
 	sidebarTabs     *container.AppTabs
 	titleLabel      *widget.Label
@@ -116,6 +117,7 @@ func (a *App) buildContent() fyne.CanvasObject {
 	a.editor = editor.New(doc.New())
 	a.editor.OnChanged(a.onDocChanged)
 	a.editor.OnIssuesChanged(func() { fyne.Do(a.updateSidebarFromEditor) })
+	a.editor.OnCommentsChanged(func() { fyne.Do(a.refreshCommentsSidebar) })
 
 	a.sidebar = ui.NewIssuesSidebar()
 	a.sidebar.OnCheck = a.runDocumentCheck
@@ -130,12 +132,14 @@ func (a *App) buildContent() fyne.CanvasObject {
 	a.versionsSidebar.OnSelect = a.previewVersion
 	a.versionsSidebar.OnRestore = a.restoreVersion
 
-	commentsPlaceholder := widget.NewLabel("Comments arrive in M5 Phase B.")
-	commentsPlaceholder.Importance = widget.LowImportance
+	a.commentsSidebar = ui.NewCommentsSidebar()
+	a.commentsSidebar.OnJump = a.jumpToComment
+	a.commentsSidebar.OnResolve = a.resolveComment
+	a.commentsSidebar.OnDelete = a.deleteCommentByID
 
 	a.sidebarTabs = container.NewAppTabs(
 		container.NewTabItem("Issues", a.sidebar),
-		container.NewTabItem("Comments", commentsPlaceholder),
+		container.NewTabItem("Comments", a.commentsSidebar),
 		container.NewTabItem("Versions", a.versionsSidebar),
 	)
 	a.sidebarTabs.SetTabLocation(container.TabLocationTop)
@@ -211,6 +215,7 @@ func (a *App) fileNew() {
 	a.dirty = false
 	a.refreshTitle()
 	a.refreshVersionsSidebar()
+	a.loadCommentsForDoc()
 }
 
 func (a *App) fileOpen() {
@@ -229,6 +234,7 @@ func (a *App) fileOpen() {
 		a.dirty = false
 		a.refreshTitle()
 		a.refreshVersionsSidebar()
+		a.loadCommentsForDoc()
 	}, a.window)
 	d.SetFilter(storage.NewExtensionFileFilter([]string{".md", ".markdown", ".txt"}))
 	d.Show()

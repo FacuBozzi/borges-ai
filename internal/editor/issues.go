@@ -133,21 +133,30 @@ func (e *RichEditor) validateIssues() {
 	changed := false
 	kept := e.issues[:0]
 	for _, iss := range e.issues {
-		if iss.BlockIndex < 0 || iss.BlockIndex >= len(e.doc.Blocks) {
-			changed = true
+		if anchorStillMatches(e.doc.Blocks, iss.BlockIndex, iss.Offset, iss.Length, iss.AnchorText) {
+			kept = append(kept, iss)
 			continue
 		}
-		plain := e.doc.Blocks[iss.BlockIndex].PlainText()
-		end := iss.Offset + iss.Length
-		if end > len(plain) || plain[iss.Offset:end] != iss.AnchorText {
-			changed = true
-			continue
-		}
-		kept = append(kept, iss)
+		changed = true
 	}
 	e.issues = kept
 	e.mu.Unlock()
 	if changed {
 		e.fireIssuesChanged()
 	}
+}
+
+// anchorStillMatches reports whether the byte range (offset..offset+length)
+// in blocks[blockIdx] still contains anchorText verbatim. Shared by issue
+// and comment validation paths.
+func anchorStillMatches(blocks []doc.Block, blockIdx, offset, length int, anchorText string) bool {
+	if blockIdx < 0 || blockIdx >= len(blocks) {
+		return false
+	}
+	plain := blocks[blockIdx].PlainText()
+	end := offset + length
+	if offset < 0 || end > len(plain) {
+		return false
+	}
+	return plain[offset:end] == anchorText
 }

@@ -309,6 +309,7 @@ func (a *App) installContextMenuExtender() {
 				fyne.NewMenuItem("Shorten", func() { a.runAICommand(ai.CmdShorten) }),
 				fyne.NewMenuItem("Expand", func() { a.runAICommand(ai.CmdExpand) }),
 				fyne.NewMenuItem("Fix tone (formal)", func() { a.runAICommand(ai.CmdFixTone) }),
+				fyne.NewMenuItem("Add comment…", a.openAddCommentDialog),
 			}
 			if customs, err := a.store.ListPrompts(); err == nil {
 				for _, p := range customs {

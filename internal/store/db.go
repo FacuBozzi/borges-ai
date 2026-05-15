@@ -71,6 +71,7 @@ var migrations = []string{
 		id                INTEGER PRIMARY KEY AUTOINCREMENT,
 		doc_path          TEXT NOT NULL,
 		anchor_text       TEXT NOT NULL,
+		block_index       INTEGER NOT NULL DEFAULT 0,
 		range_start_hint  INTEGER NOT NULL,
 		range_end_hint    INTEGER NOT NULL,
 		body              TEXT NOT NULL,
@@ -95,5 +96,37 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migration %d: %w", i, err)
 		}
 	}
+	// Idempotent column adds for dev DBs that predate later milestones.
+	// SQLite has no "ADD COLUMN IF NOT EXISTS", so we check first.
+	if err := s.ensureColumn("comments", "block_index", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return fmt.Errorf("ensure comments.block_index: %w", err)
+	}
 	return nil
+}
+
+// ensureColumn adds the column if missing. SQLite's PRAGMA table_info lists
+// existing columns; we skip ALTER TABLE when the column is already there.
+func (s *Store) ensureColumn(table, column, typeAndConstraints string) error {
+	rows, err := s.DB.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.DB.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, typeAndConstraints))
+	return err
 }

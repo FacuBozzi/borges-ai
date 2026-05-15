@@ -7,11 +7,18 @@ in Go on the [Fyne](https://github.com/fyne-io/fyne) toolkit.
 source of truth. Sections most relevant to picking up work:
 
 - [Current state — what works today](#current-state--what-works-today) — feature inventory.
-- [Not yet built (roadmap)](#not-yet-built-roadmap) — M5 Phase B (comments) is up next.
+- [Not yet built (roadmap)](#not-yet-built-roadmap) — M6 polish is up next.
+- [M6 design notes](#m6-design-notes) — concrete plan + suggested order for the next milestone.
 - [Architectural conventions](#architectural-conventions) — load-bearing patterns to follow.
-- [M5 design notes](#m5-design-notes) — version history shipped; comments still designed.
 - [Why we chose what we chose](#why-we-chose-what-we-chose) — context behind the decisions.
 - `git log --oneline` — commit messages are detailed; each milestone is its own commit.
+
+**Quick status (as of M5):** M0–M5 are shipped. The flagship features are
+all in place — custom WYSIWYG editor, dual-provider AI layer with palette
++ context menu + custom prompts, document checks, version history, and
+anchored comments. M6 (polish + onboarding + font embedding + file
+dialog replacements) is the last v1 milestone before publishing is
+deferred to v2.
 
 ## Run
 
@@ -33,9 +40,10 @@ input; the GUI still runs.
 ## Current state — what works today
 
 The custom rich-text editor, the flagship AI layer, AI document checks,
-custom prompts, the Settings dialog, and per-save version history (M0–M5
-Phase A in the internal milestone plan) are shipped. Comments and the
-read-only-URL publishing piece are not yet implemented.
+custom prompts, the Settings dialog, per-save version history, and
+anchored comments (M0–M5 in the internal milestone plan) are shipped.
+The read-only-URL publishing piece is the only major v1 deliverable
+left, and it's deferred to v2 (requires a backend).
 
 ### Editor surface
 
@@ -75,25 +83,20 @@ read-only-URL publishing piece are not yet implemented.
 | **Document checks** (grammar / clarity / style) | ✓ | cmd+shift+K or sidebar; wavy underline + Accept/Reject panel |
 | **Custom prompts library** | ✓ | AI menu → Prompts Library; text/template variables, optional hotkey, palette + right-click integration |
 | **Settings dialog** | ✓ | cmd+, ; provider + per-provider model + light/dark/system theme; persisted in SQLite |
+| **Anchored comments** | ✓ | Right-click → Add comment…; yellow background highlight; Comments sidebar with Jump / Resolve / Delete; survives doc edits via offset hint + substring fallback |
 
 ### Storage
 
 | Feature | Status | Notes |
 |---|---|---|
 | SQLite store with WAL + foreign keys | ✓ | At `~/Library/Application Support/fyne-writer/fyne-writer.db` on macOS |
-| Schema for settings / versions / comments / prompts | ✓ | Tables exist; comments UI lands in M5 Phase B |
+| Schema for settings / versions / comments / prompts | ✓ | All shipped. |
 | **Version snapshots on save** | ✓ | Versions tab in sidebar; unified diff preview; Restore is one undo step. Dedup on identical content hash. Capped at 50 per doc. |
 
 ## Not yet built (roadmap)
 
 In rough order:
 
-- **M5 Phase B — Comments.** Anchor free-text comments to byte ranges;
-  sidebar tab; right-click → "Add comment...". The Versions piece of
-  M5 is already shipped (see Current state). Reuse the AI-issues
-  anchor-resolution pattern; consider lifting `editor.Issue` rendering
-  into a generic `editor.Annotation` so comments + issues share the
-  wavy-underline pool.
 - **M6 — Polish.** File-browser sidebar, status bar, keyboard shortcut
   cheatsheet, first-run onboarding, Inter font embedding, performance
   pass on long documents. Also: replace Fyne's built-in file dialogs
@@ -206,6 +209,15 @@ the code alone.
   history is gone anyway. `ReplaceDocument` pushes a single
   `undoKindOther` entry before the swap so cmd+Z reverts. Use it
   whenever the user might want to undo the swap (e.g. version restore).
+- **Issues vs Comments — parallel state, shared invalidation.** Both
+  `issues []Issue` and `comments []Comment` live on the editor with
+  near-identical state-management code. The shared piece is
+  `anchorStillMatches()` — both validators call it from `invalidate()`
+  after every mutation. The visual decoration is separate: issues use
+  the red zigzag `issueDeco` pool; comments use the yellow `commentBGs`
+  rectangle pool. We did not unify the structs because the visual
+  shapes differ (zigzag stroke vs background fill), so the would-be
+  shared rendering code is empty.
 
 ### Context menu — `internal/editor/context_menu.go`
 
@@ -262,13 +274,13 @@ and gives the app a thread-safe callback.
   embeds `widget.Entry`, overrides `TypedKey` to intercept Esc and
   invoke `onEsc`. Future custom file dialogs will reuse it.
 
-## M5 design notes
+## M5 design notes — what shipped
 
-M5 adds two SQLite-backed features that ride alongside the document
-without changing the editor's core text model: version snapshots
-(shipped) and anchored comments (next).
+M5 added two SQLite-backed features that ride alongside the document
+without changing the editor's core text model: version snapshots and
+anchored comments. Both are shipped.
 
-### Version history — shipped (Phase A)
+### Version history (Phase A)
 
 What's in the tree (see `internal/store/versions.go`,
 `internal/app/versions.go`, `internal/ui/sidebar_versions.go`):
@@ -280,34 +292,161 @@ What's in the tree (see `internal/store/versions.go`,
   row for the doc already has the same `content_hash` (sha256 of the
   marshalled `doc.Document`).
 - **Retention.** `Store.GCVersions(path, 50)` runs after every insert.
-- **UI.** Sidebar is now an `AppTabs` (Issues / Comments / Versions).
-  The Versions tab lists snapshots newest-first with a relative-time
-  label + short hash. Selecting a row renders a unified diff (via
+- **UI.** Sidebar is an `AppTabs` (Issues / Comments / Versions). The
+  Versions tab lists snapshots newest-first with a relative-time label
+  + short hash. Selecting a row renders a unified diff (via
   `pmezard/go-difflib`) over `doc.WriteMarkdown` output.
 - **Restore.** `editor.ReplaceDocument(d)` swaps the document and pushes
   a single `undoKindOther` entry first, so cmd+Z reverts the restore in
   one step. The doc is marked dirty afterward — the user has to save to
   persist the restored content.
 
-### Comments — Phase B (still to build)
+### Comments (Phase B)
 
-Anchor free-text comments to byte ranges, with a sidebar list.
+What's in the tree (see `internal/store/comments.go`,
+`internal/app/comments.go`, `internal/ui/sidebar_comments.go`,
+`internal/editor/comments.go`):
 
-- **Schema:** `comments(id, doc_path, anchor_text, range_start_hint,
-  range_end_hint, body, resolved, created_at)` already exists.
-- **UI:** right-click on a selection → "Add comment...", which opens
-  an inline popup. The sidebar (re-use the M4 sidebar shell) lists
-  open comments with author/timestamp and Resolve/Delete actions.
-- **Anchoring strategy:** same approach as AI issues. Store
-  `anchor_text` + the original byte offset as a hint; on doc load, try
-  the offset first; if the text doesn't match, fall back to a
-  substring search and update the hint.
-- **Files to add:** `internal/store/comments.go`, sidebar panel in
-  `internal/ui/sidebar_comments.go`, `internal/app/comments.go`.
-- **Reuse:** the editor's `editor.Issue` rendering path is a near
-  match for "decorate a byte range". Consider lifting it into a more
-  generic `editor.Annotation` so comments + issues share the
-  decoration pool without duplicating wavy-underline code.
+- **Trigger.** Right-click → "Add comment…" on a single-block
+  selection. Opens a Fyne dialog with a multi-line textarea. Save
+  persists + decorates.
+- **Anchor model.** `comments(block_index, range_start_hint,
+  range_end_hint, anchor_text)`. On doc load, resolver tries the hint
+  first; if the in-block range no longer matches `anchor_text`, falls
+  back to `findUniqueAnchor` (same uniqueness rule as issues). If the
+  fallback succeeds, the new hint is persisted.
+- **Schema migration.** `block_index` was added in Phase B with an
+  in-code `ensureColumn` check (SQLite lacks `ADD COLUMN IF NOT
+  EXISTS`) so dev DBs from earlier milestones don't trip.
+- **Decoration.** Translucent yellow background rectangle (`commentBGs`
+  pool, sized like `selRects`). Drawn behind selection so a selection
+  + comment overlap still shows the selection color. The wavy issue
+  underline is unchanged — comments and issues share state-management
+  code (`anchorStillMatches` helper, the same invalidation hook) but
+  paint independently.
+- **Sidebar.** Lists open comments with Jump / Resolve / Delete.
+  Comments whose anchor no longer resolves are kept in the list as
+  "orphaned" (Jump disabled).
+
+## M6 design notes
+
+M6 is polish + onboarding. No new flagship features — instead the
+backlog of papercuts identified in [Known limitations]
+(#known-limitations) and a few UX details that have been deferred
+through M0–M5. Suggested order (lowest risk first):
+
+### 1. Custom file dialogs (replaces Fyne's built-in `dialog.FileDialog`)
+
+**Why.** Fyne's `dialog.FileDialog` focuses an internal `widget.Entry`
+that silently consumes Esc, so cmd+O / cmd+S have to be cancelled with
+a mouse click. See Known limitations for the full rabbit hole. Our own
+modals (cmd+K, Synonyms, Add Comment) already handle Esc correctly via
+`escEntry`.
+
+**Plan.**
+- New `internal/ui/dialog_file.go` — a custom file picker built on
+  `os.ReadDir` + `escEntry` + a path bar. Two flavors: open + save-as.
+- Replace `dialog.NewFileOpen` / `dialog.NewFileSave` call sites in
+  `internal/app/app.go` (fileOpen, fileSaveAs).
+- Keep extension filter behavior (`.md`, `.markdown`, `.txt`).
+- **Verify:** Esc closes both. cmd+O / cmd+S round-trip a file
+  identically. Open dialog defaults to last-used directory (store this
+  in the settings KV under `last_open_dir`).
+
+### 2. Inter + JetBrains Mono font embedding
+
+**Why.** Currently uses Fyne defaults; the README has called this out
+since M0. Embedded fonts give consistent rendering across machines.
+
+**Plan.**
+- Drop the two `.ttf` files into `internal/ui/assets/`. Embed with
+  `//go:embed`.
+- Extend `internal/ui/theme.go`'s `Font(fyne.TextStyle)` to return
+  Inter (regular / italic / bold / bold-italic) and JetBrains Mono
+  (regular + bold) for `Monospace: true`.
+- **Verify:** binary size goes up a few hundred KB but the editor +
+  code blocks render with the embedded faces. Headings still scale
+  via the existing size table.
+
+### 3. Status bar polish + keyboard cheatsheet
+
+**Why.** The status bar currently only shows Provider + Model. Add
+word count, dirty indicator, and a hover-help shortcut hint. A
+keyboard cheatsheet modal (cmd+/) makes the rest of the bindings
+discoverable.
+
+**Plan.**
+- Expand `refreshStatus()` in `app.go` to include word count
+  (`strings.Fields` over `WriteMarkdown` or a dedicated walker) and
+  a "● modified" pip when `a.dirty`.
+- New `internal/ui/dialog_shortcuts.go` — a modal listing all
+  shortcuts pulled from `editor.MarkShortcutBindings` /
+  `editor.BlockShortcutBindings` + the file menu entries. Wired to
+  cmd+/.
+- **Verify:** word count refreshes on every keypress (debounce if it's
+  expensive on 10k-word docs). cmd+/ opens the cheatsheet; Esc closes.
+
+### 4. Smoother wavy underline for AI-check issues
+
+**Why.** The current red underline is a zigzag (straight segments).
+Functional but visually rough. Known limitations lists this as M6
+polish.
+
+**Plan.**
+- In `internal/editor/renderer.go`, swap `syncIssueUnderlines` to
+  generate a sine-curve polyline using `canvas.NewLine` with more
+  segments, or use a small SVG resource via `canvas.NewImageFromResource`.
+- **Verify:** existing issue tests still pass. Visual diff is subtle
+  but the curve should read as a wave, not a sawtooth.
+
+### 5. File-browser sidebar tab
+
+**Why.** Currently there's no way to switch between recent files
+without going through cmd+O. A file-browser tab in the sidebar (4th
+tab, after Versions) would close this gap.
+
+**Plan.**
+- New `internal/ui/sidebar_files.go` — tree view over a configurable
+  root directory (default: parent of `currentPath`, or home).
+- Click a `.md` file → open in editor (warn if dirty).
+- **Verify:** opening from the tree fires the same `fileOpen` path
+  the menu uses (so versions/comments load correctly for the new doc).
+
+### 6. First-run onboarding modal
+
+**Why.** New users have no idea where to put their API keys. The
+mock provider falls back silently. A first-run modal that explains
+.env setup + offers a "test connection" button would smooth this.
+
+**Plan.**
+- On startup, check `store.GetSetting("onboarding_done")`. If empty,
+  show a modal: 3 short steps (provider keys, basic shortcuts, link
+  to README). "Got it" sets the flag.
+- **Verify:** clearing the SQLite row reshows the modal on next launch.
+
+### 7. Performance pass on long documents
+
+**Why.** Layout is currently O(N) over visual lines per Refresh. On a
+30k-word document this becomes visible.
+
+**Plan.**
+- Profile with `pprof` on a real document. Likely hotspot: the layout
+  function re-measures every block on every refresh.
+- Cache layout per block when the block hasn't changed (hash the
+  inline list and width).
+- **Verify:** typing latency on a 10k-word doc stays under 16ms per
+  keypress.
+
+### Small polish items (can be batched anywhere)
+
+- **Comments sidebar "show resolved" toggle.** Currently filtered out
+  entirely. Reuse the same row widget; just flip the
+  `ListComments(_, includeResolved)` argument behind a checkbox.
+- **Streaming spinner.** AI responses appear chunk-by-chunk with no
+  visual cue. A small spinner near the streaming caret would help.
+- **Synonyms as inline submenu.** Currently a popup because the AI
+  call is async. With caching + pre-fetch on right-click hover, the
+  submenu becomes feasible.
 
 ## Why we chose what we chose
 
@@ -337,6 +476,18 @@ The decisions worth remembering when you're tempted to change them.
   model, the store stays deterministic in tests, and we already dedup
   on `content_hash` so re-saves are free. If users start losing work
   to crashes, revisit.
+- **Comments use yellow background, not a wavy underline.** The
+  original M5 design notes hinted at sharing the AI-check wavy-underline
+  pool. We diverged: yellow background reads as "annotated" rather than
+  "wrong", and stays visually distinct from issues. The state-management
+  code is still shared (via `anchorStillMatches`); only the painter
+  differs. See [Architectural conventions → Issues vs Comments]
+  (#architectural-conventions).
+- **Idempotent `ensureColumn` helper for additive schema migrations.**
+  SQLite has no `ADD COLUMN IF NOT EXISTS`, so a `PRAGMA table_info`
+  check guards each `ALTER TABLE` in `store/db.go`. Use it for any
+  future column-add that has to survive on dev DBs created before the
+  change.
 - **Read-only-URL publishing deferred to v2.** Requires a backend
   service; out of scope for v1.
 
@@ -349,6 +500,7 @@ internal/
     app.go                         lifecycle + file menu (cmd+N/O/S) + sidebar
     ai_actions.go                  cmd+K palette, paraphrase, synonyms, right-click extender
     checks.go                      document-check trigger + anchor resolution
+    comments.go                    Add comment dialog + anchor resolver + jump/resolve/delete
     prompts.go                     custom-prompt rendering, hotkey parser, library opener
     settings.go                    settings dialog opener + hot-apply
     versions.go                    snapshot on save + diff preview + restore wiring
@@ -374,6 +526,7 @@ internal/
     context_menu.go                right-click menu + AI extension hook
     ai.go                          BeginAIReplace streaming handle
     issues.go                      AI-check issue state + apply/dismiss + invalidation
+    comments.go                    Comment state + add/remove + invalidation (shared anchor helper)
     undo.go                        snapshot ring (500), coalescing
   ai/                              provider abstraction + prompts
     provider.go                    Provider interface, Request / Chunk
@@ -384,10 +537,11 @@ internal/
     templates.go                   built-in commands + prompt builders
     checks.go                      document-wide grammar/clarity prompt + JSON parser
   store/
-    db.go                          SQLite open + migrations
+    db.go                          SQLite open + migrations + ensureColumn helper
     settings.go                    KV helpers for the settings table
     prompts.go                     CRUD on the prompts table
     versions.go                    snapshot CRUD + dedup + GC
+    comments.go                    comment CRUD + resolved filter + anchor-hint update
   ui/                              shared UI fragments
     theme.go                       custom fyne.Theme (light + dark) + forced variant
     commandpalette.go              cmd+K modal popup
@@ -395,9 +549,10 @@ internal/
     dialog_prompts.go              Prompts Library dialog + per-prompt editor
     sidebar_issues.go              AI-check sidebar widget (list + Accept/Reject)
     sidebar_versions.go            Versions sidebar widget (list + diff preview + Restore)
+    sidebar_comments.go            Comments sidebar widget (list + Jump/Resolve/Delete)
 ```
 
-Tests live alongside the code they cover. As of M5 Phase A:
+Tests live alongside the code they cover. As of M5:
 
 - `internal/doc/` — 22 tests (block helpers, mark + block round-trip,
   front-matter, clone, position).
@@ -405,7 +560,8 @@ Tests live alongside the code they cover. As of M5 Phase A:
   coalescing).
 - `internal/ai/` — JSON parser for `parseSuggestions`.
 - `internal/app/` — hotkey parser + unique-anchor resolver.
-- `internal/store/` — version dedup, list ordering, GC retention.
+- `internal/store/` — version dedup, list ordering, GC retention,
+  comment CRUD + resolved filter.
 
 ```sh
 go test ./...

@@ -17,16 +17,17 @@ const caretBlinkPeriod = 530 * time.Millisecond
 type editorRenderer struct {
 	e *RichEditor
 
-	textObjs   []*canvas.Text      // pooled, one per styled run
-	deco       []*canvas.Line      // underline / strikethrough lines
-	issueDeco  []*canvas.Line      // wavy underline segments for AI-check issues
-	gutterText []*canvas.Text      // list bullets / numbers + block prefixes
-	blockBars  []*canvas.Rectangle // left-bar for quotes
-	blockBGs   []*canvas.Rectangle // background for code blocks
-	hrLines    []*canvas.Line      // horizontal rules
-	selRects   []*canvas.Rectangle
-	caret      *canvas.Rectangle
-	bg         *canvas.Rectangle
+	textObjs    []*canvas.Text      // pooled, one per styled run
+	deco        []*canvas.Line      // underline / strikethrough lines
+	issueDeco   []*canvas.Line      // wavy underline segments for AI-check issues
+	commentBGs  []*canvas.Rectangle // yellow highlight rects for comment anchors
+	gutterText  []*canvas.Text      // list bullets / numbers + block prefixes
+	blockBars   []*canvas.Rectangle // left-bar for quotes
+	blockBGs    []*canvas.Rectangle // background for code blocks
+	hrLines     []*canvas.Line      // horizontal rules
+	selRects    []*canvas.Rectangle
+	caret       *canvas.Rectangle
+	bg          *canvas.Rectangle
 
 	running atomic.Bool
 }
@@ -53,6 +54,7 @@ func (r *editorRenderer) Layout(size fyne.Size) {
 	sel := r.e.sel
 	focused := r.e.focused
 	issues := append([]Issue(nil), r.e.issues...)
+	comments := append([]Comment(nil), r.e.comments...)
 	r.e.mu.Unlock()
 
 	r.bg.Resize(size)
@@ -60,6 +62,7 @@ func (r *editorRenderer) Layout(size fyne.Size) {
 
 	r.syncContent(d, lines)
 	r.syncBlockDecorations(d, lines)
+	r.syncCommentHighlights(lines, comments)
 	r.syncIssueUnderlines(lines, issues)
 	r.syncSelectionRects(lines, sel)
 	r.positionCaret(lines, sel, focused)
@@ -78,9 +81,12 @@ func (r *editorRenderer) MinSize() fyne.Size {
 }
 
 func (r *editorRenderer) Objects() []fyne.CanvasObject {
-	out := make([]fyne.CanvasObject, 0, 2+len(r.selRects)+len(r.textObjs)+len(r.deco)+len(r.issueDeco)+len(r.gutterText)+len(r.blockBars)+len(r.blockBGs)+len(r.hrLines))
+	out := make([]fyne.CanvasObject, 0, 2+len(r.selRects)+len(r.textObjs)+len(r.deco)+len(r.issueDeco)+len(r.commentBGs)+len(r.gutterText)+len(r.blockBars)+len(r.blockBGs)+len(r.hrLines))
 	out = append(out, r.bg)
 	for _, s := range r.blockBGs {
+		out = append(out, s)
+	}
+	for _, s := range r.commentBGs {
 		out = append(out, s)
 	}
 	for _, s := range r.selRects {
@@ -122,10 +128,12 @@ func (r *editorRenderer) Refresh() {
 	sel := r.e.sel
 	focused := r.e.focused
 	issues := append([]Issue(nil), r.e.issues...)
+	comments := append([]Comment(nil), r.e.comments...)
 	r.e.mu.Unlock()
 
 	r.syncContent(d, lines)
 	r.syncBlockDecorations(d, lines)
+	r.syncCommentHighlights(lines, comments)
 	r.syncIssueUnderlines(lines, issues)
 	r.syncSelectionRects(lines, sel)
 	r.positionCaret(lines, sel, focused)
@@ -145,6 +153,9 @@ func (r *editorRenderer) Refresh() {
 		s.Refresh()
 	}
 	for _, s := range r.blockBGs {
+		s.Refresh()
+	}
+	for _, s := range r.commentBGs {
 		s.Refresh()
 	}
 	for _, ln := range r.hrLines {
@@ -582,6 +593,63 @@ func (r *editorRenderer) syncIssueUnderlines(lines []visualLine, issues []Issue)
 	}
 	for i := len(segs); i < len(r.issueDeco); i++ {
 		r.issueDeco[i].Hide()
+	}
+}
+
+// commentHighlightColor is a soft warm yellow with low alpha — it reads as
+// "annotated" on both light and dark backgrounds.
+var commentHighlightColor = color.NRGBA{0xFF, 0xE5, 0x6B, 0x4D}
+
+// syncCommentHighlights paints a translucent yellow rectangle behind every
+// visual-line slice that overlaps a comment's anchor range. Reuses the same
+// per-visual-line geometry as syncSelectionRects but draws behind selection
+// so a comment + selection overlap still shows the selection color.
+func (r *editorRenderer) syncCommentHighlights(lines []visualLine, comments []Comment) {
+	var rects []selRect
+	for _, c := range comments {
+		start := c.Offset
+		end := c.Offset + c.Length
+		if end <= start {
+			continue
+		}
+		for _, ln := range lines {
+			if ln.blockIdx != c.BlockIndex {
+				continue
+			}
+			lo := start
+			if ln.startByte > lo {
+				lo = ln.startByte
+			}
+			hi := end
+			if ln.endByte < hi {
+				hi = ln.endByte
+			}
+			if lo >= hi {
+				continue
+			}
+			x1 := xForOffset(ln, lo)
+			x2 := xForOffset(ln, hi)
+			if x2 <= x1 {
+				continue
+			}
+			rects = append(rects, selRect{x: x1, y: ln.y, w: x2 - x1, h: ln.height})
+		}
+	}
+
+	for len(r.commentBGs) < len(rects) {
+		s := canvas.NewRectangle(commentHighlightColor)
+		s.StrokeWidth = 0
+		r.commentBGs = append(r.commentBGs, s)
+	}
+	for i, rc := range rects {
+		s := r.commentBGs[i]
+		s.FillColor = commentHighlightColor
+		s.Move(fyne.NewPos(rc.x, rc.y))
+		s.Resize(fyne.NewSize(rc.w, rc.h))
+		s.Show()
+	}
+	for i := len(rects); i < len(r.commentBGs); i++ {
+		r.commentBGs[i].Hide()
 	}
 }
 

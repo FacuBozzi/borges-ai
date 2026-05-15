@@ -82,6 +82,12 @@ type RichEditor struct {
 	// anchor text no longer matches.
 	issues          []Issue
 	onIssuesChanged func()
+
+	// comments are user-authored comments anchored to byte ranges. Same
+	// invalidation flow as issues; rendered with a yellow background fill
+	// instead of a wavy underline.
+	comments          []Comment
+	onCommentsChanged func()
 }
 
 // New creates a RichEditor populated with the given document. Pass doc.New()
@@ -111,6 +117,22 @@ func (e *RichEditor) SelectionText() string {
 	return e.selectionText()
 }
 
+// SelectionSingleBlockRange returns the byte range of the current selection
+// when it lies inside one block. ok is false if there is no selection or the
+// selection spans multiple blocks. Safe to call from any goroutine.
+func (e *RichEditor) SelectionSingleBlockRange() (blockIdx, start, end int, ok bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.sel.IsCollapsed() {
+		return 0, 0, 0, false
+	}
+	lo, hi := e.selRange()
+	if len(lo.Path) == 0 || len(hi.Path) == 0 || lo.Path[0] != hi.Path[0] {
+		return 0, 0, 0, false
+	}
+	return lo.Path[0], lo.Offset, hi.Offset, true
+}
+
 // SetDocMeta replaces the document's metadata (background instructions etc.)
 // and marks the doc dirty.
 func (e *RichEditor) SetDocMeta(m doc.DocMeta) {
@@ -123,6 +145,27 @@ func (e *RichEditor) SetDocMeta(m doc.DocMeta) {
 // setCaret collapses the selection to a single point.
 func (e *RichEditor) setCaret(p doc.Position) {
 	e.sel = doc.Selection{Anchor: p, Head: p}
+}
+
+// SelectRange sets the selection to the given byte range inside one block.
+// Used by the "Jump to comment" sidebar action. No-op when bounds are invalid.
+func (e *RichEditor) SelectRange(blockIdx, start, end int) {
+	e.mu.Lock()
+	if blockIdx < 0 || blockIdx >= len(e.doc.Blocks) {
+		e.mu.Unlock()
+		return
+	}
+	plain := e.doc.Blocks[blockIdx].PlainText()
+	if start < 0 || end > len(plain) || start > end {
+		e.mu.Unlock()
+		return
+	}
+	anchor := doc.Position{Path: []int{blockIdx}, Inline: 0, Offset: start}
+	head := doc.Position{Path: []int{blockIdx}, Inline: 0, Offset: end}
+	e.sel = doc.Selection{Anchor: anchor, Head: head}
+	e.preferredX = -1
+	e.mu.Unlock()
+	e.Refresh()
 }
 
 // Document returns the current document. Caller must not mutate concurrently

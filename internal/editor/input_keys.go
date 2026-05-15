@@ -88,9 +88,11 @@ func (e *RichEditor) TypedKey(ev *fyne.KeyEvent) {
 }
 
 // invalidate refreshes the renderer and notifies listeners. Also runs
-// AI-issue validation so stale anchors disappear when the doc is edited.
+// AI-issue + comment validation so stale anchors disappear when the doc is
+// edited.
 func (e *RichEditor) invalidate() {
 	e.validateIssues()
+	e.validateComments()
 	e.Refresh()
 	e.fireChanged()
 }

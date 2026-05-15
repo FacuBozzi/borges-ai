@@ -30,9 +30,11 @@ type App struct {
 	store    *store.Store
 	registry *ai.Registry
 
-	editor       *editor.RichEditor
-	sidebar      *ui.IssuesSidebar
-	titleLabel   *widget.Label
+	editor          *editor.RichEditor
+	sidebar         *ui.IssuesSidebar
+	versionsSidebar *ui.VersionsSidebar
+	sidebarTabs     *container.AppTabs
+	titleLabel      *widget.Label
 	statusLabel  *widget.Label
 	currentPath  string // empty until first save
 	dirty        bool
@@ -123,6 +125,21 @@ func (a *App) buildContent() fyne.CanvasObject {
 	}
 	a.sidebar.OnReject = func(id int64) { a.editor.DismissIssue(id) }
 
+	a.versionsSidebar = ui.NewVersionsSidebar()
+	a.versionsSidebar.OnRefresh = a.refreshVersionsSidebar
+	a.versionsSidebar.OnSelect = a.previewVersion
+	a.versionsSidebar.OnRestore = a.restoreVersion
+
+	commentsPlaceholder := widget.NewLabel("Comments arrive in M5 Phase B.")
+	commentsPlaceholder.Importance = widget.LowImportance
+
+	a.sidebarTabs = container.NewAppTabs(
+		container.NewTabItem("Issues", a.sidebar),
+		container.NewTabItem("Comments", commentsPlaceholder),
+		container.NewTabItem("Versions", a.versionsSidebar),
+	)
+	a.sidebarTabs.SetTabLocation(container.TabLocationTop)
+
 	a.titleLabel = widget.NewLabel("Untitled")
 	a.titleLabel.TextStyle = fyne.TextStyle{Bold: true}
 
@@ -132,7 +149,7 @@ func (a *App) buildContent() fyne.CanvasObject {
 	top := container.NewBorder(nil, nil, a.titleLabel, nil)
 	bottom := container.NewBorder(nil, nil, a.statusLabel, nil)
 	scroll := container.NewVScroll(a.editor)
-	split := container.NewHSplit(scroll, a.sidebar)
+	split := container.NewHSplit(scroll, a.sidebarTabs)
 	split.SetOffset(0.74)
 	return container.NewBorder(top, bottom, nil, nil, split)
 }
@@ -193,6 +210,7 @@ func (a *App) fileNew() {
 	a.currentPath = ""
 	a.dirty = false
 	a.refreshTitle()
+	a.refreshVersionsSidebar()
 }
 
 func (a *App) fileOpen() {
@@ -210,6 +228,7 @@ func (a *App) fileOpen() {
 		a.currentPath = rc.URI().Path()
 		a.dirty = false
 		a.refreshTitle()
+		a.refreshVersionsSidebar()
 	}, a.window)
 	d.SetFilter(storage.NewExtensionFileFilter([]string{".md", ".markdown", ".txt"}))
 	d.Show()
@@ -226,6 +245,7 @@ func (a *App) fileSave() {
 	}
 	a.dirty = false
 	a.refreshTitle()
+	a.snapshotCurrent()
 }
 
 func (a *App) fileSaveAs() {
@@ -242,6 +262,7 @@ func (a *App) fileSaveAs() {
 		a.currentPath = wc.URI().Path()
 		a.dirty = false
 		a.refreshTitle()
+		a.snapshotCurrent()
 	}, a.window)
 	d.SetFileName("Untitled.md")
 	d.Show()

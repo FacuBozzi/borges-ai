@@ -146,6 +146,21 @@ func (e *RichEditor) SetDocument(d *doc.Document) {
 	e.fireChanged()
 }
 
+// ReplaceDocument is SetDocument but records the prior state as a single undo
+// entry, so cmd+Z reverts the swap. Used by the M5 version-restore flow.
+func (e *RichEditor) ReplaceDocument(d *doc.Document) {
+	e.mu.Lock()
+	e.commitUndo(undoKindOther)
+	e.doc = d
+	start := d.Start()
+	e.sel = doc.Selection{Anchor: start, Head: start}
+	e.lines = nil
+	e.preferredX = -1
+	e.mu.Unlock()
+	e.Refresh()
+	e.fireChanged()
+}
+
 // OnChanged registers a callback fired whenever the document is mutated.
 // Used by the app to mark the title bar dirty.
 func (e *RichEditor) OnChanged(fn func()) { e.onChange = fn }

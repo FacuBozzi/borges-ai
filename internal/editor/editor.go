@@ -52,6 +52,12 @@ type RichEditor struct {
 	// shiftHeld tracks whether either Shift key is currently pressed, so
 	// arrow-key motion can extend the selection. Updated by KeyDown/KeyUp.
 	shiftHeld bool
+	// modHeld tracks whether cmd/ctrl/alt is currently held. When true,
+	// TypedRune is suppressed because Fyne's glfw driver can deliver a char
+	// event for shortcut keystrokes (e.g. cmd+K → 'k') even when the
+	// shortcut itself fires; without this guard the editor would insert the
+	// letter and overwrite the selection.
+	modHeld bool
 
 	// pendingMarks is the mark-set the next typed rune will inherit, set by
 	// mark-toggle shortcuts (cmd+B etc.) while the selection is collapsed.

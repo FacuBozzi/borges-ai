@@ -18,6 +18,10 @@ func (e *RichEditor) KeyDown(ev *fyne.KeyEvent) {
 	switch ev.Name {
 	case desktop.KeyShiftLeft, desktop.KeyShiftRight:
 		e.shiftHeld = true
+	case desktop.KeySuperLeft, desktop.KeySuperRight,
+		desktop.KeyControlLeft, desktop.KeyControlRight,
+		desktop.KeyAltLeft, desktop.KeyAltRight:
+		e.modHeld = true
 	}
 }
 
@@ -25,12 +29,22 @@ func (e *RichEditor) KeyUp(ev *fyne.KeyEvent) {
 	switch ev.Name {
 	case desktop.KeyShiftLeft, desktop.KeyShiftRight:
 		e.shiftHeld = false
+	case desktop.KeySuperLeft, desktop.KeySuperRight,
+		desktop.KeyControlLeft, desktop.KeyControlRight,
+		desktop.KeyAltLeft, desktop.KeyAltRight:
+		e.modHeld = false
 	}
 }
 
 // TypedRune handles single printable runes. fyne.Focusable.
 func (e *RichEditor) TypedRune(r rune) {
 	if r == 0 {
+		return
+	}
+	if e.modHeld {
+		// Suppress: this rune almost certainly came from a shortcut combo
+		// (cmd/ctrl/alt + letter). The shortcut path already fired its
+		// handler; we must not double-insert the letter.
 		return
 	}
 	e.mu.Lock()

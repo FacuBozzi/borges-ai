@@ -9,24 +9,34 @@ import (
 )
 
 // PaletteCommand is one row in the command palette. Title is the primary
-// label, Subtitle is dim hint text. Run is invoked when the user picks it.
+// label, Subtitle is dim hint text. When Disabled is true the row is
+// greyed and DisabledHint is shown next to the title so users understand
+// why it can't be picked.
 type PaletteCommand struct {
-	Title    string
-	Subtitle string
-	Disabled bool // greyed out, can't be picked
-	Run      func()
+	Title        string
+	Subtitle     string
+	Disabled     bool
+	DisabledHint string // shown beside the title when Disabled
+	Run          func()
 }
 
 // ShowCommandPalette opens the cmd+K overlay. The palette is a centered
-// modal with a search entry and a filterable list. Enter runs the focused
-// command; Esc cancels.
+// modal with a search entry and a filterable list. Enter runs the first
+// match; Esc cancels.
 func ShowCommandPalette(win fyne.Window, commands []PaletteCommand) {
 	if len(commands) == 0 {
 		return
 	}
 	canvas := win.Canvas()
 
-	entry := widget.NewEntry()
+	var pop *widget.PopUp
+	closePopup := func() {
+		if pop != nil {
+			pop.Hide()
+		}
+	}
+
+	entry := newEscEntry(closePopup)
 	entry.SetPlaceHolder("Type a command...")
 
 	state := &paletteState{commands: commands}
@@ -39,22 +49,30 @@ func ShowCommandPalette(win fyne.Window, commands []PaletteCommand) {
 			title.TextStyle = fyne.TextStyle{Bold: true}
 			sub := widget.NewLabel("sub")
 			sub.Importance = widget.LowImportance
+			sub.Wrapping = fyne.TextWrapWord
 			return container.NewVBox(title, sub)
 		},
 		func(i widget.ListItemID, obj fyne.CanvasObject) {
 			box := obj.(*fyne.Container)
 			cmd := state.filtered[i]
-			box.Objects[0].(*widget.Label).SetText(cmd.Title)
-			box.Objects[1].(*widget.Label).SetText(cmd.Subtitle)
+			titleLabel := box.Objects[0].(*widget.Label)
+			subLabel := box.Objects[1].(*widget.Label)
+			title := cmd.Title
+			subtitle := cmd.Subtitle
+			if cmd.Disabled {
+				if cmd.DisabledHint != "" {
+					title = title + "  ·  " + cmd.DisabledHint
+				}
+				titleLabel.Importance = widget.LowImportance
+				subLabel.Importance = widget.LowImportance
+			} else {
+				titleLabel.Importance = widget.MediumImportance
+				subLabel.Importance = widget.LowImportance
+			}
+			titleLabel.SetText(title)
+			subLabel.SetText(subtitle)
 		},
 	)
-
-	var pop *widget.PopUp
-	closePopup := func() {
-		if pop != nil {
-			pop.Hide()
-		}
-	}
 
 	pickIndex := func(i int) {
 		if i < 0 || i >= len(state.filtered) {
@@ -68,31 +86,30 @@ func ShowCommandPalette(win fyne.Window, commands []PaletteCommand) {
 		cmd.Run()
 	}
 
-	list.OnSelected = func(i widget.ListItemID) { pickIndex(i) }
+	list.OnSelected = func(i widget.ListItemID) {
+		pickIndex(i)
+		list.UnselectAll()
+	}
 
 	entry.OnChanged = func(q string) {
 		state.filtered = filterCommands(state.commands, q)
 		list.Refresh()
-		if len(state.filtered) > 0 {
-			list.Select(0)
-		}
 	}
 	entry.OnSubmitted = func(string) {
-		// "Selected()" isn't directly available; we always run the first
-		// filtered command on Enter — matches typical command-palette UX.
-		pickIndex(0)
+		// Run the first non-disabled match on Enter.
+		for i, c := range state.filtered {
+			if !c.Disabled {
+				pickIndex(i)
+				return
+			}
+		}
 	}
 
 	content := container.NewBorder(entry, nil, nil, nil, list)
-	// Constrain the popup to a comfortable size.
-	wrapper := container.NewGridWrap(fyne.NewSize(520, 340), content)
-
+	wrapper := container.NewGridWrap(fyne.NewSize(560, 380), content)
 	pop = widget.NewModalPopUp(wrapper, canvas)
 	pop.Show()
 	canvas.Focus(entry)
-	if len(state.filtered) > 0 {
-		list.Select(0)
-	}
 }
 
 type paletteState struct {
@@ -113,4 +130,26 @@ func filterCommands(all []PaletteCommand, q string) []PaletteCommand {
 		}
 	}
 	return out
+}
+
+// escEntry is a widget.Entry that closes its host popup on Esc.
+type escEntry struct {
+	widget.Entry
+	onEsc func()
+}
+
+func newEscEntry(onEsc func()) *escEntry {
+	e := &escEntry{onEsc: onEsc}
+	e.ExtendBaseWidget(e)
+	return e
+}
+
+func (e *escEntry) TypedKey(ev *fyne.KeyEvent) {
+	if ev.Name == fyne.KeyEscape {
+		if e.onEsc != nil {
+			e.onEsc()
+		}
+		return
+	}
+	e.Entry.TypedKey(ev)
 }

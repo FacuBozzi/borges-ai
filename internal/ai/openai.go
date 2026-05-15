@@ -6,7 +6,6 @@ import (
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/packages/param"
 	"github.com/openai/openai-go/shared"
 )
 
@@ -53,14 +52,18 @@ func (p *OpenAIProvider) build(req Request) openai.ChatCompletionNewParams {
 	params := openai.ChatCompletionNewParams{
 		Messages: msgs,
 		Model:    shared.ChatModel(model),
+		// "minimal" tells gpt-5 to skip its reasoning pass. Without this the
+		// model consumes the entire token budget on invisible reasoning and
+		// emits no content, leaving the editor's selection replaced with an
+		// empty string. The exported constants are low/medium/high but the
+		// type is a plain string so "minimal" is accepted by the wire API.
+		ReasoningEffort: shared.ReasoningEffort("minimal"),
 	}
-	if req.MaxTokens > 0 {
-		params.MaxCompletionTokens = param.NewOpt(int64(req.MaxTokens))
-	}
-	// Intentionally NOT setting Temperature: gpt-5 family (the default
-	// model) only accepts the API default of 1.0 and 400s on any other
-	// value. We accept losing the per-command temperature control on
-	// OpenAI; Anthropic still honors it.
+	// We intentionally do NOT cap MaxCompletionTokens or set Temperature.
+	// gpt-5 only accepts Temperature=1 (the default) and reasoning tokens
+	// count against MaxCompletionTokens; a tight cap can leave the model
+	// with no budget for visible output. Anthropic still honors both via
+	// its own Request fields.
 	return params
 }
 

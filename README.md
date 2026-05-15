@@ -106,6 +106,15 @@ In rough order:
 - **Synonyms picker is a popup, not an inline submenu.** The AI call
   is async, so we use a follow-up dialog rather than a sub-menu that
   would have to populate after the parent menu closed.
+- **Esc doesn't close Fyne's built-in file dialogs (cmd+O / cmd+S).**
+  Fyne's `dialog.FileDialog` focuses an internal `widget.Entry` that
+  silently consumes Esc, and Fyne's widget-bypassing hooks
+  (`canvas.SetOnTypedKey`, `canvas.AddShortcut`) either require no
+  focused widget or require a modifier — Esc-without-modifier never
+  becomes a `Shortcut`. Workaround for now: click the "Cancel" button.
+  Proper fix is a custom file picker that uses our `escEntry` pattern;
+  queued for M6 polish. Our own modal popups (cmd+K, Synonyms, etc.)
+  already handle Esc correctly.
 
 ## Architecture
 

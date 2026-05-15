@@ -87,28 +87,59 @@ func showSynonymPicker(win fyne.Window, word string, syns []string, replace func
 	dlg.Show()
 }
 
-// openCommandPalette gathers built-in AI commands and shows the cmd+K
-// overlay. Commands that require a selection are disabled when the editor
-// has none.
+// openCommandPalette shows the cmd+K overlay. The palette mixes AI commands
+// (which require a selection) with always-available app commands (file,
+// settings, background instructions) so it's useful in both states.
 func (a *App) openCommandPalette() {
 	hasSelection := a.editor.HasSelection()
-	specs := ai.BuiltinCommands()
-	cmds := make([]ui.PaletteCommand, 0, len(specs))
-	for _, s := range specs {
+	var cmds []ui.PaletteCommand
+
+	// AI commands first — these are the headline use case.
+	for _, s := range ai.BuiltinCommands() {
 		s := s
 		disabled := s.NeedsRange && !hasSelection
+		hint := ""
+		if disabled {
+			hint = "select some text first"
+		}
 		cmds = append(cmds, ui.PaletteCommand{
-			Title:    s.Title,
-			Subtitle: s.Description,
-			Disabled: disabled,
-			Run: func() {
-				if disabled {
-					return
-				}
-				a.runAICommand(s.Kind)
-			},
+			Title:        s.Title,
+			Subtitle:     s.Description,
+			Disabled:     disabled,
+			DisabledHint: hint,
+			Run:          func() { a.runAICommand(s.Kind) },
 		})
 	}
+
+	// Always-available app commands.
+	cmds = append(cmds,
+		ui.PaletteCommand{
+			Title:    "Background Instructions...",
+			Subtitle: "Edit the per-document AI guidance (audience, voice, etc.).",
+			Run:      a.editContext,
+		},
+		ui.PaletteCommand{
+			Title:    "New Document",
+			Subtitle: "Discard current document and start fresh.",
+			Run:      a.fileNew,
+		},
+		ui.PaletteCommand{
+			Title:    "Open File...",
+			Subtitle: "Open a .md file from disk.",
+			Run:      a.fileOpen,
+		},
+		ui.PaletteCommand{
+			Title:    "Save",
+			Subtitle: "Save the current document.",
+			Run:      a.fileSave,
+		},
+		ui.PaletteCommand{
+			Title:    "Save As...",
+			Subtitle: "Save the current document to a new file.",
+			Run:      a.fileSaveAs,
+		},
+	)
+
 	ui.ShowCommandPalette(a.window, cmds)
 }
 

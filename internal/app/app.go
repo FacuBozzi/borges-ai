@@ -52,6 +52,11 @@ type App struct {
 	// Currently-registered custom-prompt shortcuts, tracked so we can
 	// unregister them when the library changes.
 	promptShortcuts []fyne.Shortcut
+
+	// synonymCache memoizes context-aware synonym lookups (keyed by
+	// word+sentence) so the right-click submenu can show them inline on
+	// re-right-click without another API call. UI-thread access only.
+	synonymCache map[string][]string
 }
 
 func New() (*App, error) {

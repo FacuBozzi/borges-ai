@@ -328,16 +328,38 @@ func (a *App) installContextMenuExtender() {
 		if t.Word == "" || t.ReplaceWord == nil {
 			return nil
 		}
-		word := t.Word
-		sentence := t.Sentence
-		replace := t.ReplaceWord
-		return []*fyne.MenuItem{
-			fyne.NewMenuItem(fmt.Sprintf("Synonyms for \"%s\"...", word), func() {
-				a.showSynonyms(word, sentence, replace)
-			}),
-		}
+		return []*fyne.MenuItem{a.synonymsMenuItem(t.Word, t.Sentence, t.ReplaceWord)}
 	})
 }
+
+// synonymsMenuItem builds the "Synonyms" right-click entry. When synonyms for
+// this word+sentence are already cached (from a prior lookup), they appear as
+// clickable children inline; otherwise the submenu offers a "Look up…" item
+// that runs the async popup. No speculative API calls are made.
+func (a *App) synonymsMenuItem(word, sentence string, replace func(string)) *fyne.MenuItem {
+	parent := fyne.NewMenuItem(fmt.Sprintf("Synonyms for \"%s\"", word), nil)
+	var children []*fyne.MenuItem
+	if cached := a.synonymCache[synonymKey(word, sentence)]; len(cached) > 0 {
+		for _, s := range cached {
+			s := s
+			children = append(children, fyne.NewMenuItem(s, func() { replace(s) }))
+		}
+		children = append(children,
+			fyne.NewMenuItemSeparator(),
+			fyne.NewMenuItem("Look up again…", func() { a.showSynonyms(word, sentence, replace) }),
+		)
+	} else {
+		children = append(children,
+			fyne.NewMenuItem("Look up synonyms…", func() { a.showSynonyms(word, sentence, replace) }),
+		)
+	}
+	parent.ChildMenu = fyne.NewMenu("", children...)
+	return parent
+}
+
+// synonymKey keys the synonym cache by word + surrounding sentence, since
+// synonyms are context-aware.
+func synonymKey(word, sentence string) string { return word + "\x00" + sentence }
 
 // showSynonyms fires an AI call for context-aware synonyms of `word` in
 // `sentence` and opens a popup of clickable replacements.
@@ -370,6 +392,10 @@ func (a *App) showSynonyms(word, sentence string, replace func(string)) {
 				dialog.ShowInformation("Synonyms", "No suggestions returned.", a.window)
 				return
 			}
+			if a.synonymCache == nil {
+				a.synonymCache = map[string][]string{}
+			}
+			a.synonymCache[synonymKey(word, sentence)] = synonyms
 			showSynonymPicker(a.window, word, synonyms, replace)
 		})
 	}()

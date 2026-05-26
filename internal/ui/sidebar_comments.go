@@ -16,6 +16,7 @@ type CommentRow struct {
 	AnchorText string
 	AgoText    string
 	Orphaned   bool // true when the editor couldn't anchor this comment
+	Resolved   bool // true when the comment has been resolved
 }
 
 // CommentsSidebar lists open comments for the active document with per-row
@@ -23,20 +24,24 @@ type CommentRow struct {
 type CommentsSidebar struct {
 	widget.BaseWidget
 
-	header   *widget.Label
-	list     *fyne.Container
-	scroll   *container.Scroll
-	emptyMsg *widget.Label
+	header       *widget.Label
+	showResolved *widget.Check
+	list         *fyne.Container
+	scroll       *container.Scroll
+	emptyMsg     *widget.Label
 
 	rows []CommentRow
 
 	OnJump    func(id int64)
 	OnResolve func(id int64)
 	OnDelete  func(id int64)
+	// OnFilterChanged fires when the "show resolved" toggle flips; the app
+	// re-lists comments (reading ShowResolved) in response.
+	OnFilterChanged func()
 }
 
 // NewCommentsSidebar builds the widget. Callers wire OnJump/OnResolve/OnDelete
-// before showing it.
+// (and OnFilterChanged) before showing it.
 func NewCommentsSidebar() *CommentsSidebar {
 	s := &CommentsSidebar{
 		header:   widget.NewLabelWithStyle("Comments", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
@@ -46,15 +51,25 @@ func NewCommentsSidebar() *CommentsSidebar {
 	s.emptyMsg.Wrapping = fyne.TextWrapWord
 	s.emptyMsg.Importance = widget.LowImportance
 
+	s.showResolved = widget.NewCheck("Show resolved", func(bool) {
+		if s.OnFilterChanged != nil {
+			s.OnFilterChanged()
+		}
+	})
+
 	s.scroll = container.NewVScroll(s.list)
 	s.ExtendBaseWidget(s)
 	s.refresh()
 	return s
 }
 
+// ShowResolved reports whether resolved comments should be listed.
+func (s *CommentsSidebar) ShowResolved() bool { return s.showResolved.Checked }
+
 // CreateRenderer composes the sidebar layout.
 func (s *CommentsSidebar) CreateRenderer() fyne.WidgetRenderer {
-	body := container.NewBorder(s.header, nil, nil, nil, s.scroll)
+	top := container.NewVBox(s.header, s.showResolved)
+	body := container.NewBorder(top, nil, nil, nil, s.scroll)
 	return widget.NewSimpleRenderer(body)
 }
 
@@ -82,7 +97,14 @@ func (s *CommentsSidebar) buildRow(r CommentRow) fyne.CanvasObject {
 	meta := widget.NewLabel(r.AgoText)
 	meta.Importance = widget.LowImportance
 
-	anchor := widget.NewLabel("“" + truncate(r.AnchorText, 40) + "”")
+	anchorText := "“" + truncate(r.AnchorText, 40) + "”"
+	switch {
+	case r.Resolved:
+		anchorText += "  (resolved)"
+	case r.Orphaned:
+		anchorText += "  (orphaned)"
+	}
+	anchor := widget.NewLabel(anchorText)
 	anchor.Importance = widget.LowImportance
 	anchor.Wrapping = fyne.TextWrapWord
 
@@ -94,25 +116,27 @@ func (s *CommentsSidebar) buildRow(r CommentRow) fyne.CanvasObject {
 			s.OnJump(r.ID)
 		}
 	})
-	if r.Orphaned {
+	if r.Orphaned || r.Resolved {
 		jumpBtn.Disable()
 	}
-	resolveBtn := widget.NewButton("Resolve", func() {
-		if s.OnResolve != nil {
-			s.OnResolve(r.ID)
-		}
-	})
-	resolveBtn.Importance = widget.HighImportance
 	deleteBtn := widget.NewButton("Delete", func() {
 		if s.OnDelete != nil {
 			s.OnDelete(r.ID)
 		}
 	})
 
-	actions := container.NewGridWithColumns(3, jumpBtn, resolveBtn, deleteBtn)
-
-	if r.Orphaned {
-		anchor.SetText("“" + truncate(r.AnchorText, 40) + "”  (orphaned)")
+	// Resolved comments have no Resolve action; the rest keep all three.
+	var actions fyne.CanvasObject
+	if r.Resolved {
+		actions = container.NewGridWithColumns(2, jumpBtn, deleteBtn)
+	} else {
+		resolveBtn := widget.NewButton("Resolve", func() {
+			if s.OnResolve != nil {
+				s.OnResolve(r.ID)
+			}
+		})
+		resolveBtn.Importance = widget.HighImportance
+		actions = container.NewGridWithColumns(3, jumpBtn, resolveBtn, deleteBtn)
 	}
 	return container.NewVBox(meta, anchor, body, actions, widget.NewSeparator())
 }

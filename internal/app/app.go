@@ -152,6 +152,7 @@ func (a *App) buildContent() fyne.CanvasObject {
 	a.commentsSidebar.OnJump = a.jumpToComment
 	a.commentsSidebar.OnResolve = a.resolveComment
 	a.commentsSidebar.OnDelete = a.deleteCommentByID
+	a.commentsSidebar.OnFilterChanged = a.refreshCommentsSidebar
 
 	a.filesSidebar = ui.NewFilesSidebar()
 	a.filesSidebar.OnOpen = a.openFromBrowser

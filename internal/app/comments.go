@@ -163,7 +163,8 @@ func (a *App) refreshCommentsSidebar() {
 		a.commentsSidebar.SetRows(nil)
 		return
 	}
-	rows, err := a.store.ListComments(a.currentPath, false)
+	includeResolved := a.commentsSidebar.ShowResolved()
+	rows, err := a.store.ListComments(a.currentPath, includeResolved)
 	if err != nil {
 		a.commentsSidebar.SetRows(nil)
 		return
@@ -180,7 +181,8 @@ func (a *App) refreshCommentsSidebar() {
 			Body:       r.Body,
 			AnchorText: r.AnchorText,
 			AgoText:    formatAgo(now.Sub(r.CreatedAt)),
-			Orphaned:   !live[r.ID],
+			Orphaned:   !r.Resolved && !live[r.ID],
+			Resolved:   r.Resolved,
 		})
 	}
 	a.commentsSidebar.SetRows(out)

@@ -2,6 +2,7 @@ package editor
 
 import (
 	"image/color"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -520,12 +521,16 @@ func (r *editorRenderer) positionCaret(lines []visualLine, sel doc.Selection, fo
 // pool so it doesn't interfere with the per-mark underline/strike pool.
 func (r *editorRenderer) syncIssueUnderlines(lines []visualLine, issues []Issue) {
 	col := theme.Color(theme.ColorNameError)
-	const amplitude float32 = 1.6
-	const period float32 = 5
+	const amplitude float32 = 1.5
+	const period float32 = 6
+	const step float32 = 1 // sample spacing; period/step ≈ samples per wave
 
-	// Collect zigzag segments first, then allocate the line pool to fit.
+	// Collect curve segments first, then allocate the line pool to fit.
 	type segPair struct{ p1, p2 fyne.Position }
 	var segs []segPair
+	waveY := func(baseY, x, x0 float32) float32 {
+		return baseY - amplitude*float32(math.Sin(float64(2*math.Pi*(x-x0)/period)))
+	}
 
 	for _, iss := range issues {
 		start := iss.Offset
@@ -554,26 +559,21 @@ func (r *editorRenderer) syncIssueUnderlines(lines []visualLine, issues []Issue)
 				continue
 			}
 			y := ln.y + ln.height - 3
-			// Build a zigzag from x1 to x2 alternating above/below y.
-			x := x1
-			up := true
-			for x < x2 {
-				next := x + period/2
-				if next > x2 {
-					next = x2
-				}
-				var y1, y2 float32
-				if up {
-					y1, y2 = y+amplitude, y-amplitude
-				} else {
-					y1, y2 = y-amplitude, y+amplitude
-				}
+			// Trace a sine curve from x1 to x2 as a fine polyline.
+			prevX, prevY := x1, waveY(y, x1, x1)
+			for x := x1 + step; x < x2; x += step {
+				cy := waveY(y, x, x1)
 				segs = append(segs, segPair{
-					p1: fyne.NewPos(x, y1),
-					p2: fyne.NewPos(next, y2),
+					p1: fyne.NewPos(prevX, prevY),
+					p2: fyne.NewPos(x, cy),
 				})
-				x = next
-				up = !up
+				prevX, prevY = x, cy
+			}
+			if prevX < x2 {
+				segs = append(segs, segPair{
+					p1: fyne.NewPos(prevX, prevY),
+					p2: fyne.NewPos(x2, waveY(y, x2, x1)),
+				})
 			}
 		}
 	}

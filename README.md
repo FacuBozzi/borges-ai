@@ -133,9 +133,6 @@ In rough order:
 - **Editing the document drops invalidated issues.** Any issue whose
   anchor text no longer matches at the recorded offset is removed
   rather than re-resolved. Re-run the check after editing.
-- **Issue underline is a zigzag, not a true wave.** Built from short
-  `canvas.Line` segments. Visually adequate; upgrade to a smoother
-  curve is M6 polish.
 - **Custom-prompt hotkeys are limited to single letter / digit.** The
   parser accepts `Cmd|Ctrl|Shift|Alt` modifiers plus one A–Z or 0–9
   key. No function keys or punctuation yet.

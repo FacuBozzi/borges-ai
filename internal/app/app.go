@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"io"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -12,7 +12,6 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
-	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/facubozzi/fyne-writer/internal/ai"
@@ -219,25 +218,32 @@ func (a *App) fileNew() {
 }
 
 func (a *App) fileOpen() {
-	d := dialog.NewFileOpen(func(rc fyne.URIReadCloser, err error) {
-		if err != nil || rc == nil {
-			return
-		}
-		defer rc.Close()
-		data, err := io.ReadAll(rc)
+	ui.ShowOpenFile(a.fileDialogConfig(), func(path string) {
+		data, err := os.ReadFile(path)
 		if err != nil {
 			dialog.ShowError(err, a.window)
 			return
 		}
 		a.editor.SetDocument(doc.ParseMarkdown(string(data)))
-		a.currentPath = rc.URI().Path()
+		a.currentPath = path
 		a.dirty = false
 		a.refreshTitle()
 		a.refreshVersionsSidebar()
 		a.loadCommentsForDoc()
-	}, a.window)
-	d.SetFilter(storage.NewExtensionFileFilter([]string{".md", ".markdown", ".txt"}))
-	d.Show()
+	})
+}
+
+// fileDialogConfig builds the shared config for the custom open/save pickers,
+// seeding the start directory from the persisted last-used dir and writing it
+// back as the user navigates.
+func (a *App) fileDialogConfig() ui.FileDialogConfig {
+	last, _ := a.store.GetSetting(store.KeyLastOpenDir)
+	return ui.FileDialogConfig{
+		Window:      a.window,
+		StartDir:    last,
+		Extensions:  []string{".md", ".markdown", ".txt"},
+		OnDirChange: func(dir string) { _ = a.store.SetSetting(store.KeyLastOpenDir, dir) },
+	}
 }
 
 func (a *App) fileSave() {
@@ -255,35 +261,21 @@ func (a *App) fileSave() {
 }
 
 func (a *App) fileSaveAs() {
-	d := dialog.NewFileSave(func(wc fyne.URIWriteCloser, err error) {
-		if err != nil || wc == nil {
-			return
-		}
-		defer wc.Close()
-		md := doc.WriteMarkdown(a.editor.Document())
-		if _, err := wc.Write([]byte(md)); err != nil {
+	ui.ShowSaveFile(a.fileDialogConfig(), "Untitled.md", func(path string) {
+		if err := a.writeCurrent(path); err != nil {
 			dialog.ShowError(err, a.window)
 			return
 		}
-		a.currentPath = wc.URI().Path()
+		a.currentPath = path
 		a.dirty = false
 		a.refreshTitle()
 		a.snapshotCurrent()
-	}, a.window)
-	d.SetFileName("Untitled.md")
-	d.Show()
+	})
 }
 
 func (a *App) writeCurrent(path string) error {
 	md := doc.WriteMarkdown(a.editor.Document())
-	uri := storage.NewFileURI(path)
-	wc, err := storage.Writer(uri)
-	if err != nil {
-		return err
-	}
-	defer wc.Close()
-	_, err = wc.Write([]byte(md))
-	return err
+	return os.WriteFile(path, []byte(md), 0o644)
 }
 
 // CheckAI is invoked by the --check-ai CLI flag.

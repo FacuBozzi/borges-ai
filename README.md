@@ -7,18 +7,20 @@ in Go on the [Fyne](https://github.com/fyne-io/fyne) toolkit.
 source of truth. Sections most relevant to picking up work:
 
 - [Current state — what works today](#current-state--what-works-today) — feature inventory.
-- [Not yet built (roadmap)](#not-yet-built-roadmap) — M6 polish is up next.
-- [M6 design notes](#m6-design-notes) — concrete plan + suggested order for the next milestone.
+- [Not yet built (roadmap)](#not-yet-built-roadmap) — only v2 publishing remains.
+- [M6 — what shipped](#m6--what-shipped) — the polish milestone, item by item.
 - [Architectural conventions](#architectural-conventions) — load-bearing patterns to follow.
 - [Why we chose what we chose](#why-we-chose-what-we-chose) — context behind the decisions.
 - `git log --oneline` — commit messages are detailed; each milestone is its own commit.
 
-**Quick status (as of M5):** M0–M5 are shipped. The flagship features are
-all in place — custom WYSIWYG editor, dual-provider AI layer with palette
-+ context menu + custom prompts, document checks, version history, and
-anchored comments. M6 (polish + onboarding + font embedding + file
-dialog replacements) is the last v1 milestone before publishing is
-deferred to v2.
+**Quick status (as of M6):** M0–M6 are shipped — the full v1 feature set.
+The flagship features (custom WYSIWYG editor, dual-provider AI layer with
+palette + context menu + custom prompts, document checks, version history,
+anchored comments) plus the M6 polish pass (custom Esc-aware file dialogs,
+file-browser sidebar, embedded Inter/JetBrains Mono fonts, smooth wavy
+underline, status-bar word count + cmd+/ cheatsheet, first-run onboarding,
+and a per-block layout cache). The only remaining v1-scope deliverable,
+read-only-URL publishing, is deferred to v2 (requires a backend).
 
 ## Run
 
@@ -40,10 +42,10 @@ input; the GUI still runs.
 ## Current state — what works today
 
 The custom rich-text editor, the flagship AI layer, AI document checks,
-custom prompts, the Settings dialog, per-save version history, and
-anchored comments (M0–M5 in the internal milestone plan) are shipped.
-The read-only-URL publishing piece is the only major v1 deliverable
-left, and it's deferred to v2 (requires a backend).
+custom prompts, the Settings dialog, per-save version history, anchored
+comments, and the M6 polish pass (M0–M6 in the internal milestone plan)
+are all shipped. The read-only-URL publishing piece is the only major v1
+deliverable left, and it's deferred to v2 (requires a backend).
 
 ### Editor surface
 
@@ -61,6 +63,7 @@ left, and it's deferred to v2 (requires a backend).
 | Horizontal rule | ✓ | Renders as a thin line |
 | Right-click context menu | ✓ | Cut/Copy/Paste/Select All + Format submenu + AI items |
 | File menu shortcuts | ✓ | cmd+N / cmd+O / cmd+S / cmd+shift+S |
+| Custom Esc-aware open/save dialogs | ✓ | `internal/ui/dialog_file.go`; remembers last-used dir |
 | Markdown round-trip (open/save .md) | ✓ | All block + mark types preserved byte-for-byte where feasible |
 | YAML front-matter for doc metadata | ✓ | Stores per-doc background instructions |
 
@@ -93,17 +96,25 @@ left, and it's deferred to v2 (requires a backend).
 | Schema for settings / versions / comments / prompts | ✓ | All shipped. |
 | **Version snapshots on save** | ✓ | Versions tab in sidebar; unified diff preview; Restore is one undo step. Dedup on identical content hash. Capped at 50 per doc. |
 
+### UI shell & polish (M6)
+
+| Feature | Status | Notes |
+|---|---|---|
+| **File-browser sidebar tab** | ✓ | 4th sidebar tab; single-click opens a `.md`; tracks the active doc's dir; warns on unsaved changes |
+| **Embedded fonts** | ✓ | Inter (proportional) + JetBrains Mono (monospace), SIL OFL, `//go:embed` in `internal/ui/fonts.go` |
+| **Status bar word count + dirty pip** | ✓ | Live word count over block plain text; `●` when unsaved |
+| **Keyboard cheatsheet** | ✓ | cmd+/ ; filterable modal (`Help` menu) |
+| **First-run onboarding** | ✓ | Welcome modal on first launch; gated by the `onboarding_done` setting |
+| **Per-block layout cache** | ✓ | Memoizes wrap results so only edited blocks re-wrap (`internal/editor/layout_cache.go`) |
+
 ## Not yet built (roadmap)
 
-In rough order:
-
-- **M6 — Polish.** File-browser sidebar, status bar, keyboard shortcut
-  cheatsheet, first-run onboarding, Inter font embedding, performance
-  pass on long documents. Also: replace Fyne's built-in file dialogs
-  with custom modals that handle Esc, and upgrade the issue underline
-  from straight zigzag to a smoother wavy curve.
 - **Deferred to v2 — read-only URL publishing.** Requires a backend
   service (out of scope for v1).
+- **Optional polish (not yet done).** Comments-sidebar "show resolved"
+  toggle, a streaming spinner near the AI caret, and turning the Synonyms
+  popup into an inline submenu (needs right-click-hover prefetch). Batched
+  as low-priority; pick up anytime.
 
 ## Known limitations
 
@@ -314,125 +325,49 @@ What's in the tree (see `internal/store/comments.go`,
   Comments whose anchor no longer resolves are kept in the list as
   "orphaned" (Jump disabled).
 
-## M6 design notes
+## M6 — what shipped
 
-M6 is polish + onboarding. No new flagship features — instead the
-backlog of papercuts identified in [Known limitations]
-(#known-limitations) and a few UX details that have been deferred
-through M0–M5. Suggested order (lowest risk first):
+M6 was polish + onboarding: no new flagship features, just the papercut
+backlog from M0–M5 plus first-run guidance. Each item is its own commit
+(`git log`, prefixed `M6 #N`).
 
-### 1. Custom file dialogs (replaces Fyne's built-in `dialog.FileDialog`)
+1. **Custom file dialogs** (`internal/ui/dialog_file.go`, `modal.go`,
+   `dirlist.go`). Fyne's built-in `dialog.FileDialog` focuses an internal
+   `widget.Entry` that swallows Esc; our `escEntry`-based open/save modals
+   close on Esc and remember the last-used directory (`last_open_dir`
+   setting). The `showModal` helper and the `dirList` browser were extracted
+   here and reused by later items.
+2. **File-browser sidebar** (`internal/ui/sidebar_files.go`). A 4th sidebar
+   tab over `dirList`; single-click opens a `.md` through the same `openFile`
+   path the menu uses (so versions + comments reload), warning first on
+   unsaved changes.
+3. **Embedded fonts** (`internal/ui/fonts.go`, `assets/fonts/`). Inter +
+   JetBrains Mono static TTFs (SIL OFL) embedded via `//go:embed` and served
+   from `FyneWriterTheme.Font` — Inter for proportional text, JetBrains Mono
+   for monospace. Symbol font still defers to the Fyne default.
+4. **Smooth wavy underline** (`renderer.go` `syncIssueUnderlines`). The
+   AI-check underline is now a sampled sine polyline (period 6px, amplitude
+   1.5px) instead of a straight-segment zigzag.
+5. **Status bar + cheatsheet.** `refreshStatus` shows a live word count (over
+   block plain text, so markdown syntax doesn't inflate it) and a `●` dirty
+   pip; cmd+/ opens a filterable keyboard cheatsheet
+   (`internal/ui/dialog_shortcuts.go`, `Help` menu).
+6. **First-run onboarding** (`internal/ui/dialog_onboarding.go`). A welcome
+   modal shows once on first launch, gated by the `onboarding_done` setting;
+   `Run()` splits `Show()`+`Run()` so it overlays after the window appears.
+7. **Per-block layout cache** (`internal/editor/layout_cache.go`). `layout()`
+   re-wrapped every block on every Refresh; `layoutCached` memoizes
+   `wrapBlock` output keyed by (plain text, font size, indent, bold, mono,
+   width). Keying on the plain-text *value* means undo/redo/restore clones
+   hit the cache with no pointer bookkeeping; the outer loop still re-stamps
+   absolute geometry each call. A width change rebuilds the map;
+   `InvalidateLayoutCache` busts it on a theme/font swap.
+   `layout_cache_test.go` asserts the cached output is byte-identical to the
+   pure `layout()`.
 
-**Why.** Fyne's `dialog.FileDialog` focuses an internal `widget.Entry`
-that silently consumes Esc, so cmd+O / cmd+S have to be cancelled with
-a mouse click. See Known limitations for the full rabbit hole. Our own
-modals (cmd+K, Synonyms, Add Comment) already handle Esc correctly via
-`escEntry`.
-
-**Plan.**
-- New `internal/ui/dialog_file.go` — a custom file picker built on
-  `os.ReadDir` + `escEntry` + a path bar. Two flavors: open + save-as.
-- Replace `dialog.NewFileOpen` / `dialog.NewFileSave` call sites in
-  `internal/app/app.go` (fileOpen, fileSaveAs).
-- Keep extension filter behavior (`.md`, `.markdown`, `.txt`).
-- **Verify:** Esc closes both. cmd+O / cmd+S round-trip a file
-  identically. Open dialog defaults to last-used directory (store this
-  in the settings KV under `last_open_dir`).
-
-### 2. Inter + JetBrains Mono font embedding
-
-**Why.** Currently uses Fyne defaults; the README has called this out
-since M0. Embedded fonts give consistent rendering across machines.
-
-**Plan.**
-- Drop the two `.ttf` files into `internal/ui/assets/`. Embed with
-  `//go:embed`.
-- Extend `internal/ui/theme.go`'s `Font(fyne.TextStyle)` to return
-  Inter (regular / italic / bold / bold-italic) and JetBrains Mono
-  (regular + bold) for `Monospace: true`.
-- **Verify:** binary size goes up a few hundred KB but the editor +
-  code blocks render with the embedded faces. Headings still scale
-  via the existing size table.
-
-### 3. Status bar polish + keyboard cheatsheet
-
-**Why.** The status bar currently only shows Provider + Model. Add
-word count, dirty indicator, and a hover-help shortcut hint. A
-keyboard cheatsheet modal (cmd+/) makes the rest of the bindings
-discoverable.
-
-**Plan.**
-- Expand `refreshStatus()` in `app.go` to include word count
-  (`strings.Fields` over `WriteMarkdown` or a dedicated walker) and
-  a "● modified" pip when `a.dirty`.
-- New `internal/ui/dialog_shortcuts.go` — a modal listing all
-  shortcuts pulled from `editor.MarkShortcutBindings` /
-  `editor.BlockShortcutBindings` + the file menu entries. Wired to
-  cmd+/.
-- **Verify:** word count refreshes on every keypress (debounce if it's
-  expensive on 10k-word docs). cmd+/ opens the cheatsheet; Esc closes.
-
-### 4. Smoother wavy underline for AI-check issues
-
-**Why.** The current red underline is a zigzag (straight segments).
-Functional but visually rough. Known limitations lists this as M6
-polish.
-
-**Plan.**
-- In `internal/editor/renderer.go`, swap `syncIssueUnderlines` to
-  generate a sine-curve polyline using `canvas.NewLine` with more
-  segments, or use a small SVG resource via `canvas.NewImageFromResource`.
-- **Verify:** existing issue tests still pass. Visual diff is subtle
-  but the curve should read as a wave, not a sawtooth.
-
-### 5. File-browser sidebar tab
-
-**Why.** Currently there's no way to switch between recent files
-without going through cmd+O. A file-browser tab in the sidebar (4th
-tab, after Versions) would close this gap.
-
-**Plan.**
-- New `internal/ui/sidebar_files.go` — tree view over a configurable
-  root directory (default: parent of `currentPath`, or home).
-- Click a `.md` file → open in editor (warn if dirty).
-- **Verify:** opening from the tree fires the same `fileOpen` path
-  the menu uses (so versions/comments load correctly for the new doc).
-
-### 6. First-run onboarding modal
-
-**Why.** New users have no idea where to put their API keys. The
-mock provider falls back silently. A first-run modal that explains
-.env setup + offers a "test connection" button would smooth this.
-
-**Plan.**
-- On startup, check `store.GetSetting("onboarding_done")`. If empty,
-  show a modal: 3 short steps (provider keys, basic shortcuts, link
-  to README). "Got it" sets the flag.
-- **Verify:** clearing the SQLite row reshows the modal on next launch.
-
-### 7. Performance pass on long documents
-
-**Why.** Layout is currently O(N) over visual lines per Refresh. On a
-30k-word document this becomes visible.
-
-**Plan.**
-- Profile with `pprof` on a real document. Likely hotspot: the layout
-  function re-measures every block on every refresh.
-- Cache layout per block when the block hasn't changed (hash the
-  inline list and width).
-- **Verify:** typing latency on a 10k-word doc stays under 16ms per
-  keypress.
-
-### Small polish items (can be batched anywhere)
-
-- **Comments sidebar "show resolved" toggle.** Currently filtered out
-  entirely. Reuse the same row widget; just flip the
-  `ListComments(_, includeResolved)` argument behind a checkbox.
-- **Streaming spinner.** AI responses appear chunk-by-chunk with no
-  visual cue. A small spinner near the streaming caret would help.
-- **Synonyms as inline submenu.** Currently a popup because the AI
-  call is async. With caching + pre-fetch on right-click hover, the
-  submenu becomes feasible.
+Still open (low priority, see [roadmap](#not-yet-built-roadmap)): the
+comments "show resolved" toggle, a streaming spinner, and the Synonyms
+inline submenu.
 
 ## Why we chose what we chose
 
@@ -501,6 +436,7 @@ internal/
   editor/                          the custom WYSIWYG widget
     editor.go                      RichEditor (BaseWidget) + state
     layout.go                      word-wrap, visualLine, styleRun, decomposition
+    layout_cache.go                per-block wrap memoization (M6 perf)
     renderer.go                    canvas object pool, decorations, selection rects
     commands.go                    text mutations (insert/delete/split)
     input_keys.go                  TypedRune / TypedKey / arrow nav
@@ -527,20 +463,28 @@ internal/
     comments.go                    comment CRUD + resolved filter + anchor-hint update
   ui/                              shared UI fragments
     theme.go                       custom fyne.Theme (light + dark) + forced variant
+    fonts.go                       embedded Inter + JetBrains Mono faces
+    assets/fonts/                  vendored .ttf + OFL license files
+    modal.go                       showModal overlay helper (shared by dialogs)
+    dirlist.go                     reusable os.ReadDir directory browser
     commandpalette.go              cmd+K modal popup
+    dialog_file.go                 custom Esc-aware open/save pickers
     dialog_settings.go             Settings... dialog
     dialog_prompts.go              Prompts Library dialog + per-prompt editor
+    dialog_shortcuts.go            cmd+/ keyboard cheatsheet
+    dialog_onboarding.go           first-run welcome modal
     sidebar_issues.go              AI-check sidebar widget (list + Accept/Reject)
     sidebar_versions.go            Versions sidebar widget (list + diff preview + Restore)
     sidebar_comments.go            Comments sidebar widget (list + Jump/Resolve/Delete)
+    sidebar_files.go               File-browser sidebar widget (dirList tab)
 ```
 
-Tests live alongside the code they cover. As of M5:
+Tests live alongside the code they cover. As of M6:
 
-- `internal/doc/` — 22 tests (block helpers, mark + block round-trip,
-  front-matter, clone, position).
-- `internal/editor/` — 14 tests (selection math, mutations, undo
-  coalescing).
+- `internal/doc/` — block helpers, mark + block round-trip,
+  front-matter, clone, position.
+- `internal/editor/` — selection math, mutations, undo coalescing, and
+  the layout cache (asserts `layoutCached` matches the pure `layout()`).
 - `internal/ai/` — JSON parser for `parseSuggestions`.
 - `internal/app/` — hotkey parser + unique-anchor resolver.
 - `internal/store/` — version dedup, list ordering, GC retention,

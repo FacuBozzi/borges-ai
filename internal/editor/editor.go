@@ -35,8 +35,9 @@ type RichEditor struct {
 	sel      doc.Selection
 	focused  bool
 	onChange func()
-	lines    []visualLine // cached layout; rebuilt on doc/width change
-	width    float32      // last width used for layout
+	lines     []visualLine // cached layout; rebuilt on doc/width change
+	width     float32      // last width used for layout
+	wrapCache *wrapCache   // per-block wrap memoization (see layout_cache.go)
 
 	// preferredX is the screen X the caret would like to occupy when moving
 	// up/down across lines of different lengths. Reset to -1 by any motion

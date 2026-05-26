@@ -49,7 +49,7 @@ func (r *editorRenderer) Destroy() {}
 func (r *editorRenderer) Layout(size fyne.Size) {
 	r.e.mu.Lock()
 	r.e.width = size.Width
-	r.e.lines = layout(r.e.doc, size.Width)
+	r.e.lines = r.e.layoutCached(r.e.doc, size.Width)
 	d := r.e.doc
 	lines := r.e.lines
 	sel := r.e.sel
@@ -122,7 +122,7 @@ func (r *editorRenderer) Refresh() {
 
 	r.e.mu.Lock()
 	if r.e.width > 0 {
-		r.e.lines = layout(r.e.doc, r.e.width)
+		r.e.lines = r.e.layoutCached(r.e.doc, r.e.width)
 	}
 	d := r.e.doc
 	lines := r.e.lines

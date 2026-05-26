@@ -64,6 +64,9 @@ func (a *App) applySettings(v ui.SettingsValues) error {
 	if v.ThemeVariant != a.themeVariant {
 		a.themeVariant = v.ThemeVariant
 		a.fyne.Settings().SetTheme(ui.NewThemeWithVariant(ui.ThemeVariant(v.ThemeVariant)))
+		// Safety valve: the wrap cache keys on size/style but not font family,
+		// so any theme swap that could alter text metrics must bust it.
+		a.editor.InvalidateLayoutCache()
 		save(store.KeyThemeVariant, v.ThemeVariant)
 	}
 

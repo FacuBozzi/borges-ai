@@ -239,37 +239,40 @@ func (a *App) openShortcuts() {
 // list (rather than derived from the binding tables) so the labels stay
 // human-readable; these bindings change rarely.
 func shortcutGroups() []ui.ShortcutGroup {
+	item := func(keys, action string) ui.ShortcutItem {
+		return ui.ShortcutItem{Keys: keys, Action: action}
+	}
 	return []ui.ShortcutGroup{
 		{Title: "File", Items: []ui.ShortcutItem{
-			{"⌘N", "New document"},
-			{"⌘O", "Open…"},
-			{"⌘S", "Save"},
-			{"⌘⇧S", "Save As…"},
+			item("⌘N", "New document"),
+			item("⌘O", "Open…"),
+			item("⌘S", "Save"),
+			item("⌘⇧S", "Save As…"),
 		}},
 		{Title: "Formatting", Items: []ui.ShortcutItem{
-			{"⌘B", "Bold"},
-			{"⌘I", "Italic"},
-			{"⌘U", "Underline"},
-			{"⌘E", "Inline code"},
-			{"⌘⇧X", "Strikethrough"},
+			item("⌘B", "Bold"),
+			item("⌘I", "Italic"),
+			item("⌘U", "Underline"),
+			item("⌘E", "Inline code"),
+			item("⌘⇧X", "Strikethrough"),
 		}},
 		{Title: "Blocks", Items: []ui.ShortcutItem{
-			{"⌘1 / ⌘2 / ⌘3", "Heading 1 / 2 / 3"},
-			{"⌘0", "Paragraph"},
+			item("⌘1 / ⌘2 / ⌘3", "Heading 1 / 2 / 3"),
+			item("⌘0", "Paragraph"),
 		}},
 		{Title: "Editing", Items: []ui.ShortcutItem{
-			{"⌘Z", "Undo"},
-			{"⌘⇧Z", "Redo"},
-			{"⌘A", "Select all"},
-			{"⌘X / ⌘C / ⌘V", "Cut / Copy / Paste"},
+			item("⌘Z", "Undo"),
+			item("⌘⇧Z", "Redo"),
+			item("⌘A", "Select all"),
+			item("⌘X / ⌘C / ⌘V", "Cut / Copy / Paste"),
 		}},
 		{Title: "AI", Items: []ui.ShortcutItem{
-			{"⌘K", "Command palette"},
-			{"⌘⇧K", "Check document"},
-			{"⌘,", "Settings"},
+			item("⌘K", "Command palette"),
+			item("⌘⇧K", "Check document"),
+			item("⌘,", "Settings"),
 		}},
 		{Title: "Help", Items: []ui.ShortcutItem{
-			{"⌘/", "This cheatsheet"},
+			item("⌘/", "This cheatsheet"),
 		}},
 	}
 }

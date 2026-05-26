@@ -211,11 +211,13 @@ func (a *App) runAICommand(kind ai.CommandKind) {
 	ctx, cancel := context.WithCancel(context.Background())
 	_ = cancel // future: hook to Esc
 
+	a.startAIActivity()
 	go func() {
 		stream, err := provider.Stream(ctx, req)
 		if err != nil {
 			fyne.Do(func() {
 				handle.Cancel()
+				a.stopAIActivity()
 				dialog.ShowError(err, a.window)
 			})
 			return
@@ -232,6 +234,7 @@ func (a *App) runAICommand(kind ai.CommandKind) {
 			}
 		}
 		fyne.Do(func() {
+			a.stopAIActivity()
 			if failed != nil {
 				handle.Cancel()
 				dialog.ShowError(failed, a.window)

@@ -38,6 +38,8 @@ type App struct {
 	sidebarTabs     *container.AppTabs
 	titleLabel      *widget.Label
 	statusLabel  *widget.Label
+	aiSpinner    *widget.Activity // streaming indicator in the bottom bar
+	aiActive     int              // count of in-flight AI streams
 	currentPath  string // empty until first save
 	dirty        bool
 	checksRunning bool
@@ -172,8 +174,11 @@ func (a *App) buildContent() fyne.CanvasObject {
 	a.statusLabel = widget.NewLabel("")
 	a.refreshStatus()
 
+	a.aiSpinner = widget.NewActivity()
+	a.aiSpinner.Hide()
+
 	top := container.NewBorder(nil, nil, a.titleLabel, nil)
-	bottom := container.NewBorder(nil, nil, a.statusLabel, nil)
+	bottom := container.NewBorder(nil, nil, a.statusLabel, a.aiSpinner)
 	scroll := container.NewVScroll(a.editor)
 	split := container.NewHSplit(scroll, a.sidebarTabs)
 	split.SetOffset(0.74)
@@ -190,6 +195,27 @@ func (a *App) refreshStatus() {
 		status = "●  " + status
 	}
 	a.statusLabel.SetText(status)
+}
+
+// startAIActivity shows the bottom-bar streaming spinner. Ref-counted so
+// overlapping AI calls don't prematurely hide it. UI-thread only.
+func (a *App) startAIActivity() {
+	a.aiActive++
+	if a.aiSpinner != nil {
+		a.aiSpinner.Show()
+		a.aiSpinner.Start()
+	}
+}
+
+// stopAIActivity hides the spinner once the last in-flight stream finishes.
+func (a *App) stopAIActivity() {
+	if a.aiActive > 0 {
+		a.aiActive--
+	}
+	if a.aiActive == 0 && a.aiSpinner != nil {
+		a.aiSpinner.Stop()
+		a.aiSpinner.Hide()
+	}
 }
 
 // wordCount counts whitespace-separated words across the document's plain text

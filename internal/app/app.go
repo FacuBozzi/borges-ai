@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -167,8 +168,22 @@ func (a *App) refreshStatus() {
 	if a.statusLabel == nil {
 		return
 	}
-	a.statusLabel.SetText(fmt.Sprintf("Provider: %s  ·  Model: %s",
-		a.registry.ActiveName(), a.modelFor(a.registry.ActiveName())))
+	status := fmt.Sprintf("%d words  ·  Provider: %s  ·  Model: %s",
+		a.wordCount(), a.registry.ActiveName(), a.modelFor(a.registry.ActiveName()))
+	if a.dirty {
+		status = "●  " + status
+	}
+	a.statusLabel.SetText(status)
+}
+
+// wordCount counts whitespace-separated words across the document's plain text
+// (block text only, so markdown syntax doesn't inflate the count).
+func (a *App) wordCount() int {
+	n := 0
+	for _, b := range a.editor.Document().Blocks {
+		n += len(strings.Fields(b.PlainText()))
+	}
+	return n
 }
 
 func (a *App) buildMenu() *fyne.MainMenu {
@@ -190,10 +205,58 @@ func (a *App) buildMenu() *fyne.MainMenu {
 	settingsItem := fyne.NewMenuItem("Settings...", a.openSettings)
 	settingsItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyComma, Modifier: fyne.KeyModifierShortcutDefault}
 
+	shortcutsItem := fyne.NewMenuItem("Keyboard Shortcuts", a.openShortcuts)
+	shortcutsItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeySlash, Modifier: fyne.KeyModifierShortcutDefault}
+
 	return fyne.NewMainMenu(
 		fyne.NewMenu("File", newItem, openItem, saveItem, saveAsItem),
 		fyne.NewMenu("AI", paletteItem, checkItem, contextItem, promptsItem, fyne.NewMenuItemSeparator(), settingsItem),
+		fyne.NewMenu("Help", shortcutsItem),
 	)
+}
+
+// openShortcuts shows the cmd+/ keyboard cheatsheet.
+func (a *App) openShortcuts() {
+	ui.ShowShortcuts(a.window, shortcutGroups())
+}
+
+// shortcutGroups is the curated cheatsheet content. Kept as a hand-maintained
+// list (rather than derived from the binding tables) so the labels stay
+// human-readable; these bindings change rarely.
+func shortcutGroups() []ui.ShortcutGroup {
+	return []ui.ShortcutGroup{
+		{Title: "File", Items: []ui.ShortcutItem{
+			{"⌘N", "New document"},
+			{"⌘O", "Open…"},
+			{"⌘S", "Save"},
+			{"⌘⇧S", "Save As…"},
+		}},
+		{Title: "Formatting", Items: []ui.ShortcutItem{
+			{"⌘B", "Bold"},
+			{"⌘I", "Italic"},
+			{"⌘U", "Underline"},
+			{"⌘E", "Inline code"},
+			{"⌘⇧X", "Strikethrough"},
+		}},
+		{Title: "Blocks", Items: []ui.ShortcutItem{
+			{"⌘1 / ⌘2 / ⌘3", "Heading 1 / 2 / 3"},
+			{"⌘0", "Paragraph"},
+		}},
+		{Title: "Editing", Items: []ui.ShortcutItem{
+			{"⌘Z", "Undo"},
+			{"⌘⇧Z", "Redo"},
+			{"⌘A", "Select all"},
+			{"⌘X / ⌘C / ⌘V", "Cut / Copy / Paste"},
+		}},
+		{Title: "AI", Items: []ui.ShortcutItem{
+			{"⌘K", "Command palette"},
+			{"⌘⇧K", "Check document"},
+			{"⌘,", "Settings"},
+		}},
+		{Title: "Help", Items: []ui.ShortcutItem{
+			{"⌘/", "This cheatsheet"},
+		}},
+	}
 }
 
 func (a *App) onDocChanged() {
@@ -201,6 +264,7 @@ func (a *App) onDocChanged() {
 		a.dirty = true
 		a.refreshTitle()
 	}
+	a.refreshStatus() // word count + dirty pip track every edit
 }
 
 func (a *App) refreshTitle() {
@@ -219,6 +283,7 @@ func (a *App) fileNew() {
 	a.currentPath = ""
 	a.dirty = false
 	a.refreshTitle()
+	a.refreshStatus()
 	a.refreshVersionsSidebar()
 	a.loadCommentsForDoc()
 }
@@ -239,6 +304,7 @@ func (a *App) openFile(path string) {
 	a.currentPath = path
 	a.dirty = false
 	a.refreshTitle()
+	a.refreshStatus()
 	a.refreshVersionsSidebar()
 	a.loadCommentsForDoc()
 	a.syncFilesSidebar()
@@ -302,6 +368,7 @@ func (a *App) fileSave() {
 	}
 	a.dirty = false
 	a.refreshTitle()
+	a.refreshStatus()
 	a.snapshotCurrent()
 }
 
@@ -314,6 +381,7 @@ func (a *App) fileSaveAs() {
 		a.currentPath = path
 		a.dirty = false
 		a.refreshTitle()
+		a.refreshStatus()
 		a.snapshotCurrent()
 	})
 }

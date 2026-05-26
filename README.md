@@ -111,10 +111,6 @@ deliverable left, and it's deferred to v2 (requires a backend).
 
 - **Deferred to v2 — read-only URL publishing.** Requires a backend
   service (out of scope for v1).
-- **Optional polish (not yet done).** Comments-sidebar "show resolved"
-  toggle, a streaming spinner near the AI caret, and turning the Synonyms
-  popup into an inline submenu (needs right-click-hover prefetch). Batched
-  as low-priority; pick up anytime.
 
 ## Known limitations
 
@@ -365,9 +361,10 @@ backlog from M0–M5 plus first-run guidance. Each item is its own commit
    `layout_cache_test.go` asserts the cached output is byte-identical to the
    pure `layout()`.
 
-Still open (low priority, see [roadmap](#not-yet-built-roadmap)): the
-comments "show resolved" toggle, a streaming spinner, and the Synonyms
-inline submenu.
+The small-polish batch also shipped: a comments "show resolved" toggle, a
+bottom-bar streaming spinner (`widget.Activity`) during AI replacement, and
+a cache-only Synonyms inline submenu (right-click a word → cached synonyms
+appear as clickable children after the first lookup, no speculative calls).
 
 ## Why we chose what we chose
 

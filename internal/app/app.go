@@ -33,6 +33,7 @@ type App struct {
 	sidebar         *ui.IssuesSidebar
 	commentsSidebar *ui.CommentsSidebar
 	versionsSidebar *ui.VersionsSidebar
+	filesSidebar    *ui.FilesSidebar
 	sidebarTabs     *container.AppTabs
 	titleLabel      *widget.Label
 	statusLabel  *widget.Label
@@ -136,12 +137,17 @@ func (a *App) buildContent() fyne.CanvasObject {
 	a.commentsSidebar.OnResolve = a.resolveComment
 	a.commentsSidebar.OnDelete = a.deleteCommentByID
 
+	a.filesSidebar = ui.NewFilesSidebar()
+	a.filesSidebar.OnOpen = a.openFromBrowser
+
 	a.sidebarTabs = container.NewAppTabs(
 		container.NewTabItem("Issues", a.sidebar),
 		container.NewTabItem("Comments", a.commentsSidebar),
 		container.NewTabItem("Versions", a.versionsSidebar),
+		container.NewTabItem("Files", a.filesSidebar),
 	)
 	a.sidebarTabs.SetTabLocation(container.TabLocationTop)
+	a.syncFilesSidebar()
 
 	a.titleLabel = widget.NewLabel("Untitled")
 	a.titleLabel.TextStyle = fyne.TextStyle{Bold: true}
@@ -218,19 +224,58 @@ func (a *App) fileNew() {
 }
 
 func (a *App) fileOpen() {
-	ui.ShowOpenFile(a.fileDialogConfig(), func(path string) {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			dialog.ShowError(err, a.window)
-			return
-		}
-		a.editor.SetDocument(doc.ParseMarkdown(string(data)))
-		a.currentPath = path
-		a.dirty = false
-		a.refreshTitle()
-		a.refreshVersionsSidebar()
-		a.loadCommentsForDoc()
-	})
+	ui.ShowOpenFile(a.fileDialogConfig(), a.openFile)
+}
+
+// openFile loads path into the editor and refreshes the per-document sidebars.
+// Shared by the open dialog and the file-browser sidebar.
+func (a *App) openFile(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		dialog.ShowError(err, a.window)
+		return
+	}
+	a.editor.SetDocument(doc.ParseMarkdown(string(data)))
+	a.currentPath = path
+	a.dirty = false
+	a.refreshTitle()
+	a.refreshVersionsSidebar()
+	a.loadCommentsForDoc()
+	a.syncFilesSidebar()
+}
+
+// openFromBrowser opens a file picked in the Files sidebar, warning first when
+// the current document has unsaved changes.
+func (a *App) openFromBrowser(path string) {
+	if a.dirty {
+		dialog.NewConfirm("Discard changes?",
+			"The current document has unsaved changes. Open "+filepath.Base(path)+" anyway?",
+			func(ok bool) {
+				if ok {
+					a.openFile(path)
+				}
+			}, a.window).Show()
+		return
+	}
+	a.openFile(path)
+}
+
+// syncFilesSidebar points the file browser at the active document's directory
+// (falling back to the last-used dir, then home).
+func (a *App) syncFilesSidebar() {
+	if a.filesSidebar == nil {
+		return
+	}
+	dir := ""
+	if a.currentPath != "" {
+		dir = filepath.Dir(a.currentPath)
+	} else if last, _ := a.store.GetSetting(store.KeyLastOpenDir); last != "" {
+		dir = last
+	}
+	if dir == "" {
+		dir, _ = os.UserHomeDir()
+	}
+	a.filesSidebar.SetRoot(dir)
 }
 
 // fileDialogConfig builds the shared config for the custom open/save pickers,

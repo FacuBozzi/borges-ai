@@ -10,6 +10,7 @@ const (
 	KeyOpenAIModel    = "openai_model"
 	KeyThemeVariant   = "theme_variant" // "system" | "light" | "dark"
 	KeyLastOpenDir    = "last_open_dir"
+	KeyOnboardingDone = "onboarding_done"
 )
 
 // GetSetting returns the stored value for key, or "" if no row exists.

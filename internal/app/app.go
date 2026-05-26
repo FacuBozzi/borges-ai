@@ -111,8 +111,23 @@ func (a *App) registerEditorShortcuts() {
 	}
 }
 
-func (a *App) Run()                 { a.window.ShowAndRun() }
+func (a *App) Run() {
+	a.window.Show()
+	a.maybeShowOnboarding()
+	a.fyne.Run()
+}
 func (a *App) Registry() *ai.Registry { return a.registry }
+
+// maybeShowOnboarding shows the first-run welcome modal unless the user has
+// already dismissed it. Run once after the window is shown.
+func (a *App) maybeShowOnboarding() {
+	if done, _ := a.store.GetSetting(store.KeyOnboardingDone); done != "" {
+		return
+	}
+	ui.ShowOnboarding(a.window, func() {
+		_ = a.store.SetSetting(store.KeyOnboardingDone, "1")
+	})
+}
 
 func (a *App) buildContent() fyne.CanvasObject {
 	a.editor = editor.New(doc.New())

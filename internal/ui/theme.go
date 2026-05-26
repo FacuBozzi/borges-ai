@@ -7,9 +7,8 @@ import (
 	"fyne.io/fyne/v2/theme"
 )
 
-// FyneWriterTheme implements fyne.Theme with a modern, restrained palette.
-// Font embedding (Inter / JetBrains Mono) is deferred to a later milestone;
-// we fall back to the default theme's fonts so the app boots without assets.
+// FyneWriterTheme implements fyne.Theme with a modern, restrained palette and
+// embedded Inter / JetBrains Mono faces (see fonts.go).
 type FyneWriterTheme struct{}
 
 func NewTheme() fyne.Theme { return FyneWriterTheme{} }
@@ -105,7 +104,10 @@ func (FyneWriterTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) colo
 }
 
 func (FyneWriterTheme) Font(s fyne.TextStyle) fyne.Resource {
-	return theme.DefaultTheme().Font(s)
+	if s.Symbol {
+		return theme.DefaultTheme().Font(s)
+	}
+	return embeddedFont(s)
 }
 
 func (FyneWriterTheme) Icon(n fyne.ThemeIconName) fyne.Resource {

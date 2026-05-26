@@ -107,8 +107,6 @@ In rough order:
 
 ## Known limitations
 
-- **No font embedding yet.** UI falls back to Fyne's default fonts.
-  Inter + JetBrains Mono will be embedded in M6 polish.
 - **Word wrap measures at the base style.** Heading and code lines may
   overflow the right edge by a few pixels because wrap uses the plain
   body metric. Acceptable for now; visible only at narrow widths.
@@ -456,9 +454,6 @@ The decisions worth remembering when you're tempted to change them.
   appears as it arrives; we deferred adding spinners or "thinking..."
   placeholders. Revisit in M6 polish if it feels janky on a slow
   network.
-- **No font embedding yet.** Inter + JetBrains Mono are planned but
-  deferred to M6; using Fyne defaults keeps the binary small during
-  active development.
 - **Pure-Go SQLite** (`modernc.org/sqlite`, not `mattn/go-sqlite3`) so
   cross-compilation doesn't need CGo.
 - **Version snapshots on save only — no periodic ticker.** The README

@@ -7,7 +7,7 @@ in Go on the [Fyne](https://github.com/fyne-io/fyne) toolkit.
 source of truth. Sections most relevant to picking up work:
 
 - [Current state — what works today](#current-state--what-works-today) — feature inventory.
-- [Not yet built (roadmap)](#not-yet-built-roadmap) — only v2 publishing remains.
+- [Not yet built (roadmap)](#not-yet-built-roadmap) — v1 is done; next-step options + where to resume.
 - [M6 — what shipped](#m6--what-shipped) — the polish milestone, item by item.
 - [Architectural conventions](#architectural-conventions) — load-bearing patterns to follow.
 - [Why we chose what we chose](#why-we-chose-what-we-chose) — context behind the decisions.
@@ -109,8 +109,40 @@ deliverable left, and it's deferred to v2 (requires a backend).
 
 ## Not yet built (roadmap)
 
+**v1 is feature-complete (M0–M6).** There is no predefined next milestone —
+the next step is a direction choice. In rough order of how the project would
+naturally proceed:
+
+- **Ship v1 — packaging & distribution (not started, recommended next).**
+  No build/release story yet: no `fyne package` → macOS `.app`, no
+  icon/metadata, no code signing, no tagged release or cross-platform
+  builds. This is the gap between "feature-complete" and "a user can
+  install it."
+- **Editor backlog (papercuts).** The felt gaps still in
+  [Known limitations](#known-limitations): list editing has no
+  Tab / Shift+Tab depth change and no Enter-on-empty-item to exit a list
+  (most-felt); document check truncates long docs at ~6k chars (needs
+  paragraph chunking); no real-time mark indicator in the status bar.
 - **Deferred to v2 — read-only URL publishing.** Requires a backend
-  service (out of scope for v1).
+  service (hosting + an auth/sharing model). Out of scope for v1; the
+  largest piece by far.
+
+### Resuming after M6 — verification status
+
+M6 shipped in 14 commits (`git log`, prefixed `M6`). `go test ./...`,
+`go vet ./...`, and the layout benchmarks (`go test -bench . ./internal/editor/`)
+all pass. The GUI starts cleanly (no panic, no Fyne thread-safety warnings).
+
+**Still pending: a human visual pass.** Build and run, then click through:
+cmd+O (Esc should close the dialog), the **Files** sidebar tab, **cmd+/**
+(cheatsheet), and **Check Document** (cmd+⇧K) to eyeball the wavy underline +
+the bottom-bar word count / streaming spinner. To re-trigger the first-run
+onboarding modal:
+
+```sh
+sqlite3 "$HOME/Library/Application Support/fyne-writer/fyne-writer.db" \
+  "DELETE FROM settings WHERE key='onboarding_done';"
+```
 
 ## Known limitations
 

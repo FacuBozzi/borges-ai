@@ -39,6 +39,19 @@ func (e *RichEditor) layoutCached(d *doc.Document, contentWidth float32) []visua
 		e.wrapCache = c
 	}
 
+	// Every keystroke in a block produces a fresh key, so the map would grow
+	// unbounded over a long session. Cap it at a multiple of the live block
+	// count (floor 1024) and drop everything when exceeded — the next pass
+	// just re-wraps the current blocks once (the pre-cache cost), amortized
+	// to nothing since this only trips after heavy churn.
+	maxEntries := 4 * len(d.Blocks)
+	if maxEntries < 1024 {
+		maxEntries = 1024
+	}
+	if len(c.entries) > maxEntries {
+		c.entries = map[wrapKey][]visualLine{}
+	}
+
 	var lines []visualLine
 	y := editorVPadding
 	for bi, b := range d.Blocks {

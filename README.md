@@ -126,9 +126,11 @@ deliverable left, and it's deferred to v2 (requires a backend).
 - **OpenAI temperature is fixed at the API default.** gpt-5 only
   accepts the default; we drop per-command temperatures rather than
   branching by model. Anthropic still honors per-command temperatures.
-- **Synonyms picker is a popup, not an inline submenu.** The AI call
-  is async, so we use a follow-up dialog rather than a sub-menu that
-  would have to populate after the parent menu closed.
+- **First Synonyms lookup is still a popup.** The right-click submenu
+  shows cached synonyms inline, but the *first* lookup of a word opens
+  the async popup (the AI call can't populate a submenu after the parent
+  menu has closed). We chose a cache-only submenu over hover-prefetch to
+  avoid firing speculative paid API calls as the cursor moves.
 - **Document check sends the whole document as one chunk.** Truncated
   to ~6k chars, so longer documents get a partial scan. Paragraph
   chunking is deferred until the limit is hit in practice.

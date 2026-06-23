@@ -14,6 +14,7 @@ const (
 	CmdExpand     CommandKind = "expand"
 	CmdFixTone    CommandKind = "fix_tone"
 	CmdSynonyms   CommandKind = "synonyms"
+	CmdAskAI      CommandKind = "ask_ai"
 )
 
 // CommandSpec is the user-facing description of an AI command.
@@ -41,6 +42,7 @@ type PromptInputs struct {
 	Sentence    string // surrounding sentence — used by synonyms
 	Document    string // full document plain-text, trimmed to ~4k chars
 	Context     string // per-document background instructions
+	Instruction string // free-form user instruction — used by ask_ai
 }
 
 // BuildRequest produces an AI Request for the given command + inputs.
@@ -70,6 +72,8 @@ func systemPrompt(cmd CommandKind, context string) string {
 		base += " Rewrite the user's selected text in a polished, professional tone. Keep the original meaning. Reply with ONLY the rewritten text — no preface, no quotes."
 	case CmdSynonyms:
 		base += ` Given a word and the sentence it appears in, return up to 8 strong synonyms or alternates that fit naturally in that exact sentence. Match tense, pluralization, and capitalization to the original word. Respond with a JSON object: {"synonyms": ["word1", "word2", ...]}. No explanation.`
+	case CmdAskAI:
+		base += " Follow the user's instruction, operating on their selected text. Use the full document only as context for style and voice. Reply with ONLY the resulting text — no preface, no quotes."
 	}
 	if context = strings.TrimSpace(context); context != "" {
 		base += "\n\nAdditional document-level guidance from the user:\n" + context
@@ -87,6 +91,13 @@ func userPrompt(cmd CommandKind, in PromptInputs) string {
 		sb.WriteString(doc)
 		sb.WriteString("\n---\n\n")
 	}
+	if cmd == CmdAskAI {
+		sb.WriteString("Instruction:\n")
+		sb.WriteString(in.Instruction)
+		sb.WriteString("\n\nSelected text to act on:\n")
+		sb.WriteString(in.Selection)
+		return sb.String()
+	}
 	sb.WriteString("Selected text to rewrite:\n")
 	sb.WriteString(in.Selection)
 	return sb.String()
@@ -100,6 +111,10 @@ func maxTokensFor(cmd CommandKind, selection string) int {
 		return tokensForText(selection) + 32
 	case CmdExpand:
 		return tokensForText(selection)*3 + 128
+	case CmdAskAI:
+		// Generative: the instruction may ask to finish/expand, so give
+		// more headroom than the fixed rewrite commands.
+		return tokensForText(selection)*2 + 512
 	default:
 		return tokensForText(selection)*2 + 128
 	}

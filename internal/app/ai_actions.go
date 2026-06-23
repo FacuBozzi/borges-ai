@@ -94,7 +94,20 @@ func (a *App) openCommandPalette() {
 	hasSelection := a.editor.HasSelection()
 	var cmds []ui.PaletteCommand
 
-	// AI commands first — these are the headline use case.
+	// Ask AI leads — the free-form instruction box is the headline use case.
+	askHint := ""
+	if !hasSelection {
+		askHint = "select some text first"
+	}
+	cmds = append(cmds, ui.PaletteCommand{
+		Title:        "Ask AI…",
+		Subtitle:     "Give the AI a free-form instruction for the selected text.",
+		Disabled:     !hasSelection,
+		DisabledHint: askHint,
+		Run:          a.openAskAI,
+	})
+
+	// Built-in AI commands next.
 	for _, s := range ai.BuiltinCommands() {
 		s := s
 		disabled := s.NeedsRange && !hasSelection
@@ -193,20 +206,79 @@ func (a *App) runAICommand(kind ai.CommandKind) {
 		dialog.ShowInformation("AI", "Select some text first.", a.window)
 		return
 	}
-	provider := a.registry.Active()
-	model := a.modelFor(provider.Name())
-
-	handle := a.editor.BeginAIReplace()
-	if handle == nil {
-		return
-	}
-
+	model := a.modelFor(a.registry.Active().Name())
 	in := ai.PromptInputs{
 		Selection: selection,
 		Document:  documentPlainText(d),
 		Context:   d.Meta.Instructions,
 	}
-	req := ai.BuildRequest(kind, in, model)
+	a.streamReplaceSelection(ai.BuildRequest(kind, in, model))
+}
+
+// openAskAI prompts for a free-form instruction, then rewrites the current
+// selection per that instruction (WRI-8). The result replaces the selection,
+// same as the built-in commands.
+func (a *App) openAskAI() {
+	if a.editor.SelectionText() == "" {
+		dialog.ShowInformation("Ask AI", "Select some text first.", a.window)
+		return
+	}
+	var dlg dialog.Dialog
+	var entry *submitEntry
+	submit := func() {
+		instruction := strings.TrimSpace(entry.Text)
+		if instruction == "" {
+			return
+		}
+		dlg.Hide()
+		a.runAskAI(instruction)
+	}
+	entry = newSubmitEntry("e.g. finish this article in the same writing style (Shift+Enter for a new line)", submit)
+	dlg = dialog.NewCustomConfirm("Ask AI", "Send", "Cancel", entry,
+		func(ok bool) {
+			if ok {
+				submit()
+			}
+		},
+		a.window,
+	)
+	dlg.Resize(fyne.NewSize(520, 240))
+	dlg.Show()
+	// Focus the entry so the user can type immediately without clicking in.
+	a.window.Canvas().Focus(entry)
+}
+
+// runAskAI streams the AI's response to a free-form instruction into the
+// current selection.
+func (a *App) runAskAI(instruction string) {
+	if instruction == "" {
+		return
+	}
+	d := a.editor.Document()
+	selection := a.editor.SelectionText()
+	if selection == "" {
+		dialog.ShowInformation("Ask AI", "Select some text first.", a.window)
+		return
+	}
+	model := a.modelFor(a.registry.Active().Name())
+	in := ai.PromptInputs{
+		Selection:   selection,
+		Document:    documentPlainText(d),
+		Context:     d.Meta.Instructions,
+		Instruction: instruction,
+	}
+	a.streamReplaceSelection(ai.BuildRequest(ai.CmdAskAI, in, model))
+}
+
+// streamReplaceSelection replaces the current selection with streamed AI
+// output for req, as a single undo step. Shared by the built-in commands and
+// Ask AI.
+func (a *App) streamReplaceSelection(req ai.Request) {
+	provider := a.registry.Active()
+	handle := a.editor.BeginAIReplace()
+	if handle == nil {
+		return
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	_ = cancel // future: hook to Esc
@@ -308,6 +380,7 @@ func (a *App) installContextMenuExtender() {
 	a.editor.SetContextMenuExtender(func(t editor.ContextMenuTarget) []*fyne.MenuItem {
 		if t.HasSelection {
 			items := []*fyne.MenuItem{
+				fyne.NewMenuItem("Ask AI…", a.openAskAI),
 				fyne.NewMenuItem("Paraphrase", func() { a.runAICommand(ai.CmdParaphrase) }),
 				fyne.NewMenuItem("Shorten", func() { a.runAICommand(ai.CmdShorten) }),
 				fyne.NewMenuItem("Expand", func() { a.runAICommand(ai.CmdExpand) }),

@@ -223,13 +223,22 @@ func (a *App) openAskAI() {
 		dialog.ShowInformation("Ask AI", "Select some text first.", a.window)
 		return
 	}
-	entry := newMultilineEntry("", "e.g. finish this article in the same writing style")
-	dlg := dialog.NewCustomConfirm("Ask AI", "Send", "Cancel", entry,
+	var dlg dialog.Dialog
+	var entry *submitEntry
+	submit := func() {
+		instruction := strings.TrimSpace(entry.Text)
+		if instruction == "" {
+			return
+		}
+		dlg.Hide()
+		a.runAskAI(instruction)
+	}
+	entry = newSubmitEntry("e.g. finish this article in the same writing style (Shift+Enter for a new line)", submit)
+	dlg = dialog.NewCustomConfirm("Ask AI", "Send", "Cancel", entry,
 		func(ok bool) {
-			if !ok {
-				return
+			if ok {
+				submit()
 			}
-			a.runAskAI(strings.TrimSpace(entry.Text))
 		},
 		a.window,
 	)

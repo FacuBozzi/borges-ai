@@ -101,14 +101,20 @@ func wrapLine(blockIdx int, line string, baseOffset int, style doc.BlockStyle, w
 		}
 		seg := line[start:end]
 		segW := fyne.MeasureText(seg, style.FontSize, textStyle).Width
+		// Absorb the wrap whitespace into this line's range so the
+		// continuation line starts at the word, not at a leading space (WRI-9).
+		next := end
+		for next < len(line) && isWrapBreakable(line[next]) {
+			next++
+		}
 		out = append(out, visualLine{
 			blockIdx:  blockIdx,
 			text:      seg,
 			startByte: baseOffset + start,
-			endByte:   baseOffset + end,
+			endByte:   baseOffset + next,
 			width:     segW,
 		})
-		start = wordStart
+		start = next
 		cursor = wordEnd
 	}
 	if start < len(line) {

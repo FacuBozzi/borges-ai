@@ -78,6 +78,11 @@ type RichEditor struct {
 	// items (AI actions). See SetContextMenuExtender.
 	ctxExtender ContextMenuExtender
 
+	// submitHandler, when set by the app layer, is invoked on the submit
+	// shortcut (Cmd/Ctrl+Enter). The editor stays AI-agnostic — it only
+	// dispatches the chord. See SetSubmitHandler / SubmitShortcut.
+	submitHandler func()
+
 	// issues are the active AI-check hints with resolved byte ranges. Edits
 	// to the document run them through validateIssues() and drop any whose
 	// anchor text no longer matches.

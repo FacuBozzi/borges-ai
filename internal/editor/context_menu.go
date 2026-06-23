@@ -34,6 +34,15 @@ func (e *RichEditor) SetContextMenuExtender(fn ContextMenuExtender) {
 	e.mu.Unlock()
 }
 
+// SetSubmitHandler installs (or clears) the handler fired on the submit
+// shortcut (SubmitShortcut, Cmd/Ctrl+Enter). The app wires this to its
+// "Ask AI" launcher; the editor itself has no knowledge of AI.
+func (e *RichEditor) SetSubmitHandler(fn func()) {
+	e.mu.Lock()
+	e.submitHandler = fn
+	e.mu.Unlock()
+}
+
 // buildContextMenu constructs the right-click menu. Items operate on the
 // current selection (Cut/Copy require non-empty; Paste requires clipboard
 // content; Format submenu toggles marks). App-supplied AI items are

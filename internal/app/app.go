@@ -81,6 +81,7 @@ func New() (*App, error) {
 	a.window.Canvas().Focus(a.editor)
 	a.registerEditorShortcuts()
 	a.installContextMenuExtender()
+	a.editor.SetSubmitHandler(a.openAskAI)
 	a.refreshPromptShortcuts()
 	return a, nil
 }
@@ -116,6 +117,10 @@ func (a *App) registerEditorShortcuts() {
 			apply(a.editor)
 		})
 	}
+	// Cmd/Ctrl+Enter opens the Ask AI modal. Registering on the canvas tells
+	// the driver this chord is a shortcut (suppressing the default newline);
+	// the editor's submit handler is what actually fires while it's focused.
+	c.AddShortcut(editor.SubmitShortcut, func(fyne.Shortcut) { a.openAskAI() })
 }
 
 func (a *App) Run() {
@@ -243,6 +248,8 @@ func (a *App) buildMenu() *fyne.MainMenu {
 	saveAsItem := fyne.NewMenuItem("Save As...", a.fileSaveAs)
 	saveAsItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyS, Modifier: fyne.KeyModifierShortcutDefault | fyne.KeyModifierShift}
 
+	askAIItem := fyne.NewMenuItem("Ask AI...", a.openAskAI)
+	askAIItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyReturn, Modifier: fyne.KeyModifierShortcutDefault}
 	paletteItem := fyne.NewMenuItem("Command Palette...", a.openCommandPalette)
 	paletteItem.Shortcut = &desktop.CustomShortcut{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierShortcutDefault}
 	checkItem := fyne.NewMenuItem("Check Document", a.runDocumentCheck)
@@ -257,7 +264,7 @@ func (a *App) buildMenu() *fyne.MainMenu {
 
 	return fyne.NewMainMenu(
 		fyne.NewMenu("File", newItem, openItem, saveItem, saveAsItem),
-		fyne.NewMenu("AI", paletteItem, checkItem, contextItem, promptsItem, fyne.NewMenuItemSeparator(), settingsItem),
+		fyne.NewMenu("AI", askAIItem, paletteItem, checkItem, contextItem, promptsItem, fyne.NewMenuItemSeparator(), settingsItem),
 		fyne.NewMenu("Help", shortcutsItem),
 	)
 }

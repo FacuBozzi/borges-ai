@@ -29,6 +29,15 @@ func (e *RichEditor) TypedShortcut(s fyne.Shortcut) {
 	case *fyne.ShortcutRedo:
 		e.Redo()
 	case *desktop.CustomShortcut:
+		if sc.Key() == SubmitShortcut.Key() && sc.Mod() == SubmitShortcut.Mod() {
+			e.mu.Lock()
+			fn := e.submitHandler
+			e.mu.Unlock()
+			if fn != nil {
+				fn()
+			}
+			return
+		}
 		if mark, ok := markForShortcut(sc); ok {
 			e.toggleMark(mark)
 			return
@@ -66,6 +75,12 @@ func markForShortcut(sc *desktop.CustomShortcut) (doc.Mark, bool) {
 	}
 	return 0, false
 }
+
+// SubmitShortcut is Cmd/Ctrl+Enter. The app registers it on the canvas (so the
+// driver treats the chord as a shortcut and suppresses the default newline) and
+// wires a handler via SetSubmitHandler (used for "Ask AI"). The editor only
+// dispatches it — it has no knowledge of what the handler does.
+var SubmitShortcut = &desktop.CustomShortcut{KeyName: fyne.KeyReturn, Modifier: fyne.KeyModifierShortcutDefault}
 
 // MarkShortcutBindings lists custom shortcut bindings the app wires onto the
 // window canvas. Each tuple is (shortcut, mark).

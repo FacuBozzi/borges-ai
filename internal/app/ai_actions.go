@@ -235,6 +235,8 @@ func (a *App) openAskAI() {
 	)
 	dlg.Resize(fyne.NewSize(520, 240))
 	dlg.Show()
+	// Focus the entry so the user can type immediately without clicking in.
+	a.window.Canvas().Focus(entry)
 }
 
 // runAskAI streams the AI's response to a free-form instruction into the

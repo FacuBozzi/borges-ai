@@ -160,13 +160,16 @@ func (a *App) runCustomPrompt(p store.Prompt) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	_ = cancel
+	id := a.tasks.start(p.Name, cancel)
 	go func() {
 		stream, err := provider.Stream(ctx, req)
 		if err != nil {
 			fyne.Do(func() {
+				a.tasks.finish(id)
 				handle.Cancel()
-				dialog.ShowError(err, a.window)
+				if ctx.Err() == nil {
+					dialog.ShowError(err, a.window)
+				}
 			})
 			return
 		}
@@ -182,6 +185,11 @@ func (a *App) runCustomPrompt(p store.Prompt) {
 			}
 		}
 		fyne.Do(func() {
+			a.tasks.finish(id)
+			if ctx.Err() != nil { // user cancelled: revert partial text
+				handle.Cancel()
+				return
+			}
 			if failed != nil {
 				handle.Cancel()
 				dialog.ShowError(failed, a.window)
@@ -196,16 +204,17 @@ func (a *App) runCustomPrompt(p store.Prompt) {
 // modal so prompts can be used as one-off queries without overwriting any
 // text. Kept simple — paste-back is not yet wired.
 func (a *App) runCustomPromptPreview(provider ai.Provider, req ai.Request, name string) {
-	loading := dialog.NewCustomWithoutButtons(name, widgetLoading("Generating..."), a.window)
-	loading.Show()
+	ctx, cancel := context.WithTimeout(context.Background(), 60_000_000_000)
+	id := a.tasks.start(name, cancel)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 60_000_000_000)
 		defer cancel()
 		resp, err := provider.Generate(ctx, req)
 		fyne.Do(func() {
-			loading.Hide()
+			a.tasks.finish(id)
 			if err != nil {
-				dialog.ShowError(err, a.window)
+				if ctx.Err() == nil {
+					dialog.ShowError(err, a.window)
+				}
 				return
 			}
 			out := newMultilineEntry(resp.Text, "")

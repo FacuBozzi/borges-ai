@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/facubozzi/fyne-writer/internal/ai"
@@ -38,8 +39,8 @@ type App struct {
 	sidebarTabs     *container.AppTabs
 	titleLabel      *widget.Label
 	statusLabel  *widget.Label
-	aiSpinner    *widget.Activity // streaming indicator in the bottom bar
-	aiActive     int              // count of in-flight AI streams
+	tasks        *taskManager      // in-flight AI operations
+	tasksOverlay *ui.TasksOverlay  // floating status card for those tasks
 	currentPath  string // empty until first save
 	dirty        bool
 	checksRunning bool
@@ -184,15 +185,27 @@ func (a *App) buildContent() fyne.CanvasObject {
 	a.statusLabel = widget.NewLabel("")
 	a.refreshStatus()
 
-	a.aiSpinner = widget.NewActivity()
-	a.aiSpinner.Hide()
+	// AI task registry + its floating status card. The card lists in-flight
+	// AI operations and lets the user cancel them; it hides itself when idle.
+	a.tasks = &taskManager{}
+	a.tasksOverlay = ui.NewTasksOverlay()
+	a.tasksOverlay.OnCancel = a.tasks.cancel
+	a.tasks.onChange = a.tasksOverlay.SetTasks
 
 	top := container.NewBorder(nil, nil, a.titleLabel, nil)
-	bottom := container.NewBorder(nil, nil, a.statusLabel, a.aiSpinner)
+	bottom := container.NewBorder(nil, nil, a.statusLabel, nil)
 	scroll := container.NewVScroll(a.editor)
 	split := container.NewHSplit(scroll, a.sidebarTabs)
 	split.SetOffset(0.74)
-	return container.NewBorder(top, bottom, nil, nil, split)
+	content := container.NewBorder(top, bottom, nil, nil, split)
+
+	// Float the task card in the bottom-right corner without blocking input:
+	// the spacers aren't tappable, so clicks in the empty regions of the
+	// overlay layer fall through to the editor underneath (Fyne hit-tests
+	// only Tappable/Draggable/Scrollable leaf objects).
+	corner := container.NewHBox(layout.NewSpacer(),
+		container.NewVBox(layout.NewSpacer(), container.NewPadded(a.tasksOverlay)))
+	return container.NewStack(content, corner)
 }
 
 func (a *App) refreshStatus() {
@@ -205,27 +218,6 @@ func (a *App) refreshStatus() {
 		status = "●  " + status
 	}
 	a.statusLabel.SetText(status)
-}
-
-// startAIActivity shows the bottom-bar streaming spinner. Ref-counted so
-// overlapping AI calls don't prematurely hide it. UI-thread only.
-func (a *App) startAIActivity() {
-	a.aiActive++
-	if a.aiSpinner != nil {
-		a.aiSpinner.Show()
-		a.aiSpinner.Start()
-	}
-}
-
-// stopAIActivity hides the spinner once the last in-flight stream finishes.
-func (a *App) stopAIActivity() {
-	if a.aiActive > 0 {
-		a.aiActive--
-	}
-	if a.aiActive == 0 && a.aiSpinner != nil {
-		a.aiSpinner.Stop()
-		a.aiSpinner.Hide()
-	}
 }
 
 // wordCount counts whitespace-separated words across the document's plain text

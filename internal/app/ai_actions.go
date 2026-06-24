@@ -57,12 +57,6 @@ func dedupeStrings(in []string) []string {
 	return out
 }
 
-// widgetLoading returns a tiny widget for "loading..." inline displays.
-func widgetLoading(msg string) fyne.CanvasObject {
-	bar := widget.NewProgressBarInfinite()
-	return container.NewVBox(widget.NewLabel(msg), bar)
-}
-
 // showSynonymPicker pops a small dialog with one button per synonym. Click
 // a button to replace the word and dismiss.
 func showSynonymPicker(win fyne.Window, word string, syns []string, replace func(string)) {
@@ -212,7 +206,7 @@ func (a *App) runAICommand(kind ai.CommandKind) {
 		Document:  documentPlainText(d),
 		Context:   d.Meta.Instructions,
 	}
-	a.streamReplaceSelection(ai.BuildRequest(kind, in, model))
+	a.streamReplaceSelection(commandLabel(kind), ai.BuildRequest(kind, in, model))
 }
 
 // openAskAI prompts for a free-form instruction, then rewrites the current
@@ -267,13 +261,13 @@ func (a *App) runAskAI(instruction string) {
 		Context:     d.Meta.Instructions,
 		Instruction: instruction,
 	}
-	a.streamReplaceSelection(ai.BuildRequest(ai.CmdAskAI, in, model))
+	a.streamReplaceSelection("Ask AI", ai.BuildRequest(ai.CmdAskAI, in, model))
 }
 
 // streamReplaceSelection replaces the current selection with streamed AI
 // output for req, as a single undo step. Shared by the built-in commands and
-// Ask AI.
-func (a *App) streamReplaceSelection(req ai.Request) {
+// Ask AI. label names the operation in the floating task card.
+func (a *App) streamReplaceSelection(label string, req ai.Request) {
 	provider := a.registry.Active()
 	handle := a.editor.BeginAIReplace()
 	if handle == nil {
@@ -281,16 +275,17 @@ func (a *App) streamReplaceSelection(req ai.Request) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	_ = cancel // future: hook to Esc
+	id := a.tasks.start(label, cancel)
 
-	a.startAIActivity()
 	go func() {
 		stream, err := provider.Stream(ctx, req)
 		if err != nil {
 			fyne.Do(func() {
+				a.tasks.finish(id)
 				handle.Cancel()
-				a.stopAIActivity()
-				dialog.ShowError(err, a.window)
+				if ctx.Err() == nil { // not a user cancel — surface the failure
+					dialog.ShowError(err, a.window)
+				}
 			})
 			return
 		}
@@ -306,7 +301,11 @@ func (a *App) streamReplaceSelection(req ai.Request) {
 			}
 		}
 		fyne.Do(func() {
-			a.stopAIActivity()
+			a.tasks.finish(id)
+			if ctx.Err() != nil { // user cancelled: revert partial text
+				handle.Cancel()
+				return
+			}
 			if failed != nil {
 				handle.Cancel()
 				dialog.ShowError(failed, a.window)
@@ -315,6 +314,17 @@ func (a *App) streamReplaceSelection(req ai.Request) {
 			handle.Commit()
 		})
 	}()
+}
+
+// commandLabel returns the built-in command's display title for use as a task
+// label. Falls back to "AI" for kinds without a builtin spec.
+func commandLabel(kind ai.CommandKind) string {
+	for _, s := range ai.BuiltinCommands() {
+		if s.Kind == kind {
+			return s.Title
+		}
+	}
+	return "AI"
 }
 
 // modelFor returns the configured default model for the given provider.
@@ -441,11 +451,8 @@ func (a *App) showSynonyms(word, sentence string, replace func(string)) {
 	model := a.modelFor(provider.Name())
 	d := a.editor.Document()
 
-	loading := dialog.NewCustomWithoutButtons("Synonyms", widgetLoading("Looking up synonyms..."), a.window)
-	loading.Show()
-
 	ctx, cancel := context.WithCancel(context.Background())
-	_ = cancel
+	id := a.tasks.start("Synonyms: "+word, cancel)
 
 	go func() {
 		req := ai.BuildRequest(ai.CmdSynonyms, ai.PromptInputs{
@@ -455,9 +462,11 @@ func (a *App) showSynonyms(word, sentence string, replace func(string)) {
 		}, model)
 		resp, err := provider.Generate(ctx, req)
 		fyne.Do(func() {
-			loading.Hide()
+			a.tasks.finish(id)
 			if err != nil {
-				dialog.ShowError(err, a.window)
+				if ctx.Err() == nil { // not a user cancel
+					dialog.ShowError(err, a.window)
+				}
 				return
 			}
 			synonyms := parseSynonyms(resp.Text)

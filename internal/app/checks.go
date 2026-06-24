@@ -36,15 +36,20 @@ func (a *App) runDocumentCheck() {
 	provider := a.registry.Active()
 	model := a.modelFor(provider.Name())
 
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	id := a.tasks.start("Checking document…", cancel)
+
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		suggestions, err := ai.CheckDocument(ctx, provider, model, plain, context_)
 		fyne.Do(func() {
+			a.tasks.finish(id)
 			a.checksRunning = false
 			a.sidebar.SetRunning(false)
 			if err != nil {
-				dialog.ShowError(err, a.window)
+				if ctx.Err() == nil { // not a user cancel
+					dialog.ShowError(err, a.window)
+				}
 				return
 			}
 			issues := a.resolveSuggestions(suggestions)

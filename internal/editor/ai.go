@@ -62,12 +62,16 @@ func (h *AIReplace) Append(chunk string) {
 		e.mu.Unlock()
 		return
 	}
-	// Insert chunk at h.to (no marks for AI output for now).
+	// Insert chunk at the stream cursor (no marks for AI output for now).
 	bi := h.to.Path[0]
-	e.doc.Blocks[bi] = doc.InsertText(e.doc.Blocks[bi], h.to.Offset, chunk, 0)
-	h.to.Offset += len(chunk)
-	e.setCaret(h.to)
-	e.preferredX = -1
+	start := h.to.Offset
+	e.doc.Blocks[bi] = doc.InsertText(e.doc.Blocks[bi], start, chunk, 0)
+	// Keep the user's caret/selection at the same logical spot instead of
+	// dragging it along with the stream — they may be working elsewhere while
+	// the AI runs in the background.
+	e.sel.Anchor = shiftPos(e.sel.Anchor, bi, start, 0, len(chunk))
+	e.sel.Head = shiftPos(e.sel.Head, bi, start, 0, len(chunk))
+	h.to.Offset = start + len(chunk)
 	e.mu.Unlock()
 	e.invalidate()
 }
@@ -99,15 +103,42 @@ func (h *AIReplace) Cancel() {
 	}
 	// Delete whatever's been streamed in so far, then re-insert the original.
 	bi := h.from.Path[0]
+	start := h.from.Offset
+	removed := h.to.Offset - h.from.Offset
 	e.doc.Blocks[bi] = doc.DeleteRange(e.doc.Blocks[bi], h.from.Offset, h.to.Offset)
 	if h.original != "" {
 		e.doc.Blocks[bi] = doc.InsertText(e.doc.Blocks[bi], h.from.Offset, h.original, 0)
 	}
-	e.setCaret(doc.Position{Path: []int{bi}, Inline: 0, Offset: h.from.Offset + len(h.original)})
+	// Transform the user's caret/selection across the revert (streamed text
+	// removed, original restored) so it stays put logically.
+	e.sel.Anchor = shiftPos(e.sel.Anchor, bi, start, removed, len(h.original))
+	e.sel.Head = shiftPos(e.sel.Head, bi, start, removed, len(h.original))
 	e.activeAI = 0
 	e.preferredX = -1
 	e.mu.Unlock()
 	e.invalidate()
+}
+
+// shiftPos transforms a position across a splice in block bi: at byte offset
+// start, `removed` bytes were deleted and `inserted` bytes inserted. Positions
+// in other blocks, or at/before the splice point, are unchanged; positions
+// after the removed region shift by the net length delta; positions inside the
+// removed region collapse to the splice point. This keeps the user's caret at
+// the same logical spot while AI text streams into the document.
+func shiftPos(p doc.Position, bi, start, removed, inserted int) doc.Position {
+	if len(p.Path) == 0 || p.Path[0] != bi {
+		return p
+	}
+	switch {
+	case p.Offset <= start:
+		// at or before the splice point: unchanged
+	case p.Offset >= start+removed:
+		p.Offset += inserted - removed
+	default:
+		// inside the removed region: collapse to the splice point
+		p.Offset = start
+	}
+	return p
 }
 
 var aiCounter atomic.Int64
